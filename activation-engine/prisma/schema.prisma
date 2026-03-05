@@ -1,0 +1,307 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ───────────────────────────────────────────────
+
+enum PoolStatus {
+  DRAFT
+  APPROVED
+  ACTIVE
+  CLOSED
+}
+
+enum PoolMemberSide {
+  INVESTOR
+  FOUNDER
+}
+
+enum PoolMemberStatus {
+  PENDING
+  ACTIVE
+  RESPONDED
+  COMPLETED
+  REMOVED
+}
+
+enum PoolPairStatus {
+  PENDING
+  INVESTOR_YES
+  FOUNDER_YES
+  MUTUAL_YES
+  INVESTOR_NO
+  FOUNDER_NO
+  NO_MATCH
+  INTRO_SENT
+  COMPLETED
+}
+
+enum EmailSequenceStep {
+  A1_MATCH_LIST
+  A1_FU_FOLLOWUP
+  A2_CONFIRMATION
+  A3_INTRO
+  A4_FEEDBACK
+  B1_MATCH_LIST
+  B1_FU_FOLLOWUP
+  B2_CONFIRMATION
+  B3_INTRO
+  B4_FEEDBACK
+}
+
+enum ActivationStatus {
+  UNACTIVATED
+  IN_POOL
+  ACTIVATED
+  STRONG_ACTIVATED
+  AT_RISK
+}
+
+enum InvestorTier {
+  HOT
+  WARM
+  GAP_FILL
+}
+
+enum EventType {
+  POOL_CREATED
+  POOL_APPROVED
+  POOL_ACTIVATED
+  POOL_CLOSED
+  EMAIL_SENT
+  EMAIL_OPENED
+  EMAIL_REPLIED
+  RESPONSE_PARSED
+  INTRO_TRIGGERED
+  INTRO_SENT
+  USER_CLASSIFIED
+  MANUAL_OVERRIDE
+}
+
+enum NudgeType {
+  POST_POOL_REMINDER
+  ACTIVATION_PROMPT
+  RE_ENGAGEMENT
+  FEEDBACK_REQUEST
+}
+
+// ─── Models ──────────────────────────────────────────────
+
+model Pool {
+  id        String     @id @default(cuid())
+  industry  String
+  status    PoolStatus @default(DRAFT)
+
+  // Size constraints
+  minInvestors Int @default(3)
+  maxInvestors Int @default(6)
+  minFounders  Int @default(3)
+  maxFounders  Int @default(6)
+
+  // SLA
+  slaHours Int @default(48)
+
+  // Approval
+  approvedBy String?
+  approvedAt DateTime?
+
+  // Activation
+  activatedAt DateTime?
+  closedAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members PoolMember[]
+  pairs   PoolPair[]
+  events  EventLedger[]
+}
+
+model PoolMember {
+  id     String         @id @default(cuid())
+  poolId String
+  pool   Pool           @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  userId String         // References Syrena User.id (plain string, no FK)
+  side   PoolMemberSide
+  status PoolMemberStatus @default(PENDING)
+
+  // Investor-specific
+  investorTier InvestorTier?
+
+  // Cached from Syrena at pool creation
+  displayName String?
+  email       String?
+
+  // Engagement score at time of pool generation
+  engagementScore Float @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([poolId, userId])
+  @@index([userId])
+}
+
+model PoolPair {
+  id         String         @id @default(cuid())
+  poolId     String
+  pool       Pool           @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  investorId String         // References Syrena User.id
+  founderId  String         // References Syrena User.id
+  score      Float          @default(0)
+  rank       Int            @default(0)
+  status     PoolPairStatus @default(PENDING)
+
+  // Denormalized for quick display
+  investorName  String?
+  investorEmail String?
+  founderName   String?
+  founderEmail  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  emails       OutreachEmail[]
+  introduction Introduction?
+  matchScore   MatchScore?
+
+  @@unique([poolId, investorId, founderId])
+  @@index([investorId])
+  @@index([founderId])
+}
+
+model OutreachEmail {
+  id         String            @id @default(cuid())
+  poolPairId String
+  poolPair   PoolPair          @relation(fields: [poolPairId], references: [id], onDelete: Cascade)
+  side       PoolMemberSide
+  step       EmailSequenceStep
+
+  resendEmailId String?
+  sentAt        DateTime?
+  deliveredAt   DateTime?
+  openedAt      DateTime?
+  clickedAt     DateTime?
+  repliedAt     DateTime?
+  bouncedAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  response ResponseRecord?
+
+  @@index([poolPairId])
+  @@index([resendEmailId])
+}
+
+model ResponseRecord {
+  id              String        @id @default(cuid())
+  outreachEmailId String        @unique
+  outreachEmail   OutreachEmail @relation(fields: [outreachEmailId], references: [id], onDelete: Cascade)
+
+  rawResponse    String?
+  parsedChoices  Json?   // e.g. { "selectedFounders": ["id1", "id3"] }
+  confidence     Float   @default(0)
+
+  // Manual override
+  overriddenBy   String?
+  overriddenAt   DateTime?
+  overrideReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Introduction {
+  id         String   @id @default(cuid())
+  poolPairId String   @unique
+  poolPair   PoolPair @relation(fields: [poolPairId], references: [id], onDelete: Cascade)
+
+  status          String @default("PENDING") // PENDING, SENT, ACCEPTED, DECLINED
+  introEmailBody  String?
+  resendEmailId   String?
+
+  sentAt      DateTime?
+  acceptedAt  DateTime?
+  declinedAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model UserActivationStatus {
+  id     String           @id @default(cuid())
+  userId String           @unique // References Syrena User.id
+  side   PoolMemberSide
+  status ActivationStatus @default(UNACTIVATED)
+
+  poolCount    Int @default(0)
+  introCount   Int @default(0)
+  responseRate Float @default(0)
+
+  activatedAt       DateTime?
+  strongActivatedAt DateTime?
+  lastPoolAt        DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([side])
+}
+
+model EventLedger {
+  id      String    @id @default(cuid())
+  type    EventType
+  actorId String?   // Who triggered this (operator or system)
+  poolId  String?
+  pool    Pool?     @relation(fields: [poolId], references: [id], onDelete: SetNull)
+  payload Json?     // Flexible event data
+
+  createdAt DateTime @default(now())
+
+  @@index([type])
+  @@index([poolId])
+  @@index([createdAt])
+}
+
+model ConversionNudge {
+  id        String    @id @default(cuid())
+  userId    String    // References Syrena User.id
+  nudgeType NudgeType
+  sentAt    DateTime  @default(now())
+
+  resendEmailId String?
+  convertedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model MatchScore {
+  id         String   @id @default(cuid())
+  poolPairId String   @unique
+  poolPair   PoolPair @relation(fields: [poolPairId], references: [id], onDelete: Cascade)
+  investorId String
+  founderId  String
+
+  totalScore        Float @default(0)
+  industryScore     Float @default(0)
+  locationScore     Float @default(0)
+  stageScore        Float @default(0)
+  chequeSizeScore   Float @default(0)
+  engagementScore   Float @default(0)
+
+  featureVector Json? // Raw feature data for ML
+
+  createdAt DateTime @default(now())
+
+  @@index([investorId])
+  @@index([founderId])
+}
