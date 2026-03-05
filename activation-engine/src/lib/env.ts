@@ -7,6 +7,8 @@ export const env = createEnv({
     SYRENA_DATABASE_URL: z.string().url(),
     RESEND_API_KEY: z.string().min(1),
     CONTROL_TOWER_PASSWORD: z.string().min(1),
+    EMAIL_TEST_MODE: z.string().optional().default("false"),
+    OPENAI_API_KEY: z.string().min(1).optional(),
   },
   client: {
     NEXT_PUBLIC_APP_URL: z.string().url(),
@@ -17,5 +19,7 @@ export const env = createEnv({
     RESEND_API_KEY: process.env.RESEND_API_KEY,
     CONTROL_TOWER_PASSWORD: process.env.CONTROL_TOWER_PASSWORD,
     NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
+    EMAIL_TEST_MODE: process.env.EMAIL_TEST_MODE,
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
   },
 })

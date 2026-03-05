@@ -105,6 +105,13 @@ model Pool {
   // SLA
   slaHours Int @default(48)
 
+  // Ownership
+  ownerId   String?
+  ownerName String?
+
+  // Test mode
+  isTestPool Boolean @default(false)
+
   // Approval
   approvedBy String?
   approvedAt DateTime?
@@ -139,6 +146,13 @@ model PoolMember {
   // Engagement score at time of pool generation
   engagementScore Float @default(0)
 
+  // Three-stage tracking
+  stage               Int       @default(0) // 0=Not started, 1=Presented, 2=Selected, 3=Feedback
+  matchesPresentedIds Json?     // String[] — userIds of matches shown
+  selectedMatchIds    Json?     // String[] — userIds this member selected
+  respondedAt         DateTime?
+  stageCompletedAt    DateTime? // All 3 stages done = ACTIVATED
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -162,12 +176,31 @@ model PoolPair {
   founderName   String?
   founderEmail  String?
 
+  // Presentation tracking
+  presentedToInvestor Boolean @default(false)
+  presentedToFounder  Boolean @default(false)
+
+  // Stage 2: Selection
+  investorSelected Boolean @default(false)
+  founderSelected  Boolean @default(false)
+
+  // Cross-match outcome
+  crossMatchOutcome String? // "MUTUAL_YES" | "INVESTOR_ONLY" | "FOUNDER_ONLY" | "NO_MATCH" | "PENDING"
+
+  // Stage 3: Feedback
+  investorFeedback         String?
+  investorFeedbackPositive Boolean?
+  founderFeedback          String?
+  founderFeedbackPositive  Boolean?
+  feedbackDeliveredAt      DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  emails       OutreachEmail[]
-  introduction Introduction?
-  matchScore   MatchScore?
+  emails              OutreachEmail[]
+  introduction        Introduction?
+  matchScore          MatchScore?
+  personalizationLines PersonalizationLine[]
 
   @@unique([poolId, investorId, founderId])
   @@index([investorId])
@@ -300,8 +333,66 @@ model MatchScore {
 
   featureVector Json? // Raw feature data for ML
 
+  // Outcome tracking
+  outcome       String?   // "INTRO_SENT" | "MUTUAL_YES" | "ONE_SIDED" | "NO_MATCH"
+  outcomeReason String?
+  outcomeAt     DateTime?
+
   createdAt DateTime @default(now())
 
   @@index([investorId])
   @@index([founderId])
+}
+
+// ─── Personalization ────────────────────────────────────
+
+model PersonalizationLine {
+  id         String   @id @default(cuid())
+  poolPairId String
+  poolPair   PoolPair @relation(fields: [poolPairId], references: [id], onDelete: Cascade)
+
+  side     PoolMemberSide // Which side sees this line
+  line     String         // "Relevant because they invest in early-stage AI..."
+  approved Boolean @default(false)
+
+  generatedAt DateTime  @default(now())
+  approvedAt  DateTime?
+  approvedBy  String?
+
+  @@index([poolPairId])
+}
+
+// ─── New Joiners ────────────────────────────────────────
+
+model NewJoinerMatch {
+  id          String         @id @default(cuid())
+  userId      String         // The new joiner (Syrena User.id)
+  side        PoolMemberSide // INVESTOR or FOUNDER
+  matchUserId String         // The matched user (Syrena User.id)
+
+  // Denormalized for display
+  userName   String?
+  userEmail  String?
+  matchName  String?
+  matchEmail String?
+
+  score       Float   @default(0)
+  whyRelevant String? // LLM-generated line
+  approved    Boolean @default(false) // Operator approved
+
+  // Stage tracking (simplified: presented → selected → done)
+  stage            Int      @default(0) // 0=Draft, 1=Presented, 2=Selected, 3=Done
+  selected         Boolean  @default(false)
+  feedback         String?
+  feedbackPositive Boolean?
+
+  // Email tracking
+  emailSentAt DateTime?
+  isTestMode  Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([matchUserId])
 }

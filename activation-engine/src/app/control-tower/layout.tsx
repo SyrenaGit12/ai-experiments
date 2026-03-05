@@ -1,4 +1,5 @@
 import { SidebarNav } from "@/components/control-tower/sidebar-nav"
+import { TestModeBanner } from "@/components/control-tower/test-mode-banner"
 
 export default function ControlTowerLayout({
   children,
@@ -8,7 +9,10 @@ export default function ControlTowerLayout({
   return (
     <div className="flex min-h-screen bg-gray-950">
       <SidebarNav />
-      <main className="flex-1 p-8">{children}</main>
+      <div className="flex-1 flex flex-col">
+        <TestModeBanner />
+        <main className="flex-1 p-8">{children}</main>
+      </div>
     </div>
   )
 }

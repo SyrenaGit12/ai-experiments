@@ -8,13 +8,38 @@ export const SCORING_WEIGHTS = {
 } as const
 
 // ─── Pool Defaults ───────────────────────────────────────
+// Soft targets — the algorithm aims for these but adjusts flexibly
 export const POOL_DEFAULTS = {
-  MIN_INVESTORS: 3,
+  // Soft targets (what we aim for)
+  TARGET_INVESTORS: 3,
+  TARGET_FOUNDERS: 4,
+
+  // Hard limits
+  MIN_POOL_MEMBERS: 2,  // Absolute minimum per side to create a pool
+  MAX_POOL_MEMBERS: 6,  // Hard ceiling per side
+
+  // Legacy aliases (used in DB schema defaults)
+  MIN_INVESTORS: 2,
   MAX_INVESTORS: 6,
-  MIN_FOUNDERS: 3,
+  MIN_FOUNDERS: 2,
   MAX_FOUNDERS: 6,
+
   SLA_HOURS: 48,
   MAX_CONCURRENT_POOLS_PER_INVESTOR: 2,
+
+  // Match presentation limits
+  MATCHES_PER_INVESTOR: 4,  // Investors see up to 4 founders
+  MATCHES_PER_FOUNDER: 3,   // Founders see up to 3 investors
+
+  // Recency filter
+  INVESTOR_LOGIN_RECENCY_DAYS: 14,
+} as const
+
+// ─── New Joiner Defaults ────────────────────────────────
+export const NEW_JOINER_DEFAULTS = {
+  RECENCY_DAYS: 7,            // "new joiner" = signed up within 7 days
+  MATCHES_FOR_INVESTOR: 3,    // New investor joiners see 3 founders
+  MATCHES_FOR_FOUNDER: 2,     // New founder joiners see 2 investors
 } as const
 
 // ─── Investor Tier Thresholds (percentile) ───────────────

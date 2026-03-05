@@ -12,7 +12,10 @@ export async function GET(
     include: {
       members: { orderBy: { side: "asc" } },
       pairs: {
-        include: { matchScore: true },
+        include: {
+          matchScore: true,
+          personalizationLines: true,
+        },
         orderBy: { score: "desc" },
       },
       events: {

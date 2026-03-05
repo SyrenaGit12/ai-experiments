@@ -12,79 +12,79 @@ import {
   Column,
 } from "@react-email/components"
 
-interface FounderMatch {
+interface MatchCard {
   index: number
   name: string
-  company?: string | null
+  /** Company name for founders, firm name for investors */
+  organization?: string | null
   bio?: string | null
-  industry: string
-  fundingStage?: string | null
   whyRelevant?: string | null
-}
-
-interface A1InvestorMatchListProps {
-  investorFirstName: string
   industry: string
-  founders: FounderMatch[]
+  /** e.g. "Pre-Seed" for founders, "Angel" for investors */
+  detail?: string | null
 }
 
-export function A1InvestorMatchList({
-  investorFirstName,
-  industry,
-  founders,
-}: A1InvestorMatchListProps) {
-  const industryLabel = industry.replace(/_/g, " ")
+interface NewJoinerWelcomeProps {
+  firstName: string
+  /** "INVESTOR" or "FOUNDER" — the role of the new joiner */
+  side: "INVESTOR" | "FOUNDER"
+  matches: MatchCard[]
+}
+
+export function NewJoinerWelcome({
+  firstName,
+  side,
+  matches,
+}: NewJoinerWelcomeProps) {
+  const matchType = side === "INVESTOR" ? "founders" : "investors"
+  const previewText = `Welcome to Syrena — we found ${matches.length} ${matchType} for you`
 
   return (
     <Html>
       <Head />
-      <Preview>
-        Your curated founder matches in {industryLabel}
-      </Preview>
+      <Preview>{previewText}</Preview>
       <Body style={main}>
         <Container style={container}>
-          <Heading style={heading}>Your Curated Matches</Heading>
+          <Heading style={heading}>Welcome to Syrena</Heading>
 
           <Text style={text}>
-            Hi {investorFirstName},
+            Hi {firstName},
           </Text>
 
           <Text style={text}>
-            We&apos;ve hand-picked {founders.length} founder
-            {founders.length > 1 ? "s" : ""} building in{" "}
-            <strong>{industryLabel}</strong> that align with your investment
-            profile. Here&apos;s who we think you should meet:
+            Welcome aboard! Based on your profile, we&apos;ve already
+            identified {matches.length} {matchType} who look like a great fit.
+            Here&apos;s who we think you should meet:
           </Text>
 
           <Hr style={divider} />
 
-          {founders.map((founder) => (
-            <Section key={founder.index} style={matchCard}>
+          {matches.map((match) => (
+            <Section key={match.index} style={matchCard}>
               <Row>
                 <Column>
-                  <Text style={matchNumber}>{founder.index}</Text>
+                  <Text style={matchNumber}>{match.index}</Text>
                 </Column>
                 <Column style={{ width: "100%" }}>
-                  <Text style={matchName}>{founder.name}</Text>
-                  {founder.company && (
-                    <Text style={matchCompany}>{founder.company}</Text>
+                  <Text style={matchName}>{match.name}</Text>
+                  {match.organization && (
+                    <Text style={matchOrg}>{match.organization}</Text>
                   )}
-                  {founder.bio && (
+                  {match.bio && (
                     <Text style={matchBio}>
-                      {founder.bio.length > 150
-                        ? founder.bio.slice(0, 150) + "..."
-                        : founder.bio}
+                      {match.bio.length > 150
+                        ? match.bio.slice(0, 150) + "..."
+                        : match.bio}
                     </Text>
                   )}
-                  {founder.whyRelevant && (
-                    <Text style={whyRelevant}>
-                      {founder.whyRelevant}
+                  {match.whyRelevant && (
+                    <Text style={whyRelevantStyle}>
+                      {match.whyRelevant}
                     </Text>
                   )}
                   <Text style={matchMeta}>
-                    {founder.industry.replace(/_/g, " ")}
-                    {founder.fundingStage &&
-                      ` · ${founder.fundingStage.replace(/_/g, " ")}`}
+                    {match.industry.replace(/_/g, " ")}
+                    {match.detail && ` · ${match.detail.replace(/_/g, " ")}`}
                   </Text>
                 </Column>
               </Row>
@@ -95,17 +95,18 @@ export function A1InvestorMatchList({
 
           <Section style={ctaSection}>
             <Text style={ctaText}>
-              <strong>Interested?</strong> Simply reply to this email with the
-              numbers of the founders you&apos;d like to meet.
+              <strong>Like what you see?</strong> Simply reply to this email
+              and let us know which {matchType} you&apos;d like to meet.
             </Text>
             <Text style={ctaExample}>
-              For example: &quot;I&apos;d like to meet 1 and 3&quot;
+              For example: &quot;I&apos;d love to meet{" "}
+              {matches.length >= 2 ? "1 and 2" : "1"}&quot;
             </Text>
           </Section>
 
           <Text style={text}>
-            We&apos;ll handle the introductions and make sure both sides are
-            aligned before connecting you.
+            We&apos;ll check mutual interest and handle the introductions —
+            no cold outreach, just warm connections.
           </Text>
 
           <Text style={signature}>
@@ -119,8 +120,8 @@ export function A1InvestorMatchList({
           <Hr style={divider} />
 
           <Text style={footer}>
-            You&apos;re receiving this because you&apos;re a member of the Syrena
-            investor network. If you&apos;d prefer not to receive match
+            You&apos;re receiving this because you recently joined the Syrena
+            network. If you&apos;d prefer not to receive match
             recommendations, reply with &quot;unsubscribe&quot;.
           </Text>
         </Container>
@@ -172,7 +173,7 @@ const matchCard = {
 }
 
 const matchNumber = {
-  color: "#6366f1",
+  color: "#10b981",
   fontSize: "20px",
   fontWeight: "700" as const,
   margin: "0",
@@ -188,7 +189,7 @@ const matchName = {
   lineHeight: "24px",
 }
 
-const matchCompany = {
+const matchOrg = {
   color: "#6b7280",
   fontSize: "14px",
   margin: "0 0 6px",
@@ -202,8 +203,8 @@ const matchBio = {
   margin: "0 0 8px",
 }
 
-const whyRelevant = {
-  color: "#6366f1",
+const whyRelevantStyle = {
+  color: "#10b981",
   fontSize: "13px",
   fontStyle: "italic" as const,
   lineHeight: "18px",
@@ -220,7 +221,7 @@ const matchMeta = {
 }
 
 const ctaSection = {
-  backgroundColor: "#eef2ff",
+  backgroundColor: "#ecfdf5",
   borderRadius: "8px",
   padding: "20px",
   marginBottom: "16px",
@@ -234,7 +235,7 @@ const ctaText = {
 }
 
 const ctaExample = {
-  color: "#6366f1",
+  color: "#10b981",
   fontSize: "14px",
   fontStyle: "italic" as const,
   margin: "0",

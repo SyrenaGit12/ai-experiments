@@ -19,6 +19,7 @@ interface InvestorMatch {
   investorType?: string | null
   fundingStages?: string[]
   bio?: string | null
+  whyRelevant?: string | null
 }
 
 interface B1FounderMatchListProps {
@@ -78,6 +79,11 @@ export function B1FounderMatchList({
                       {investor.bio.length > 150
                         ? investor.bio.slice(0, 150) + "..."
                         : investor.bio}
+                    </Text>
+                  )}
+                  {investor.whyRelevant && (
+                    <Text style={whyRelevant}>
+                      {investor.whyRelevant}
                     </Text>
                   )}
                   {investor.fundingStages &&
@@ -212,6 +218,14 @@ const matchBio = {
   color: "#374151",
   fontSize: "14px",
   lineHeight: "20px",
+  margin: "0 0 8px",
+}
+
+const whyRelevant = {
+  color: "#8b5cf6",
+  fontSize: "13px",
+  fontStyle: "italic" as const,
+  lineHeight: "18px",
   margin: "0 0 8px",
 }
 
