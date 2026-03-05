@@ -1,4 +1,5 @@
 import db from "@/lib/db"
+import type { Prisma } from "@prisma/client"
 import { POOL_DEFAULTS } from "@/lib/constants"
 import { classifyUsers } from "./classify-users"
 import { scoreInvestors } from "./score-investors"
@@ -67,7 +68,7 @@ export async function generatePool(
   }
 
   // Persist: Create pool, members, pairs, scores in a transaction
-  const result = await db.$transaction(async (tx) => {
+  const result = await db.$transaction(async (tx: Prisma.TransactionClient) => {
     // Create the pool
     const pool = await tx.pool.create({
       data: {

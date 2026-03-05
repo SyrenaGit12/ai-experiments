@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import db from "@/lib/db"
+import type { Prisma } from "@prisma/client"
 
 export async function POST(
   _request: Request,
@@ -20,7 +21,7 @@ export async function POST(
     )
   }
 
-  const updated = await db.$transaction(async (tx) => {
+  const updated = await db.$transaction(async (tx: Prisma.TransactionClient) => {
     const approved = await tx.pool.update({
       where: { id: poolId },
       data: {

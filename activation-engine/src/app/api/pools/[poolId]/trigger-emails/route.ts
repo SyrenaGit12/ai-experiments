@@ -4,7 +4,7 @@ import db from "@/lib/db"
 import { resend, EMAIL_FROM, BATCH_SIZE, BATCH_DELAY_MS } from "@/lib/resend"
 import { A1InvestorMatchList } from "@/services/email/templates/a1-investor-match-list"
 import { B1FounderMatchList } from "@/services/email/templates/b1-founder-match-list"
-import type { PoolMemberSide } from "@prisma/client"
+import type { PoolMemberSide, Prisma } from "@prisma/client"
 
 export async function POST(
   request: Request,
@@ -160,7 +160,7 @@ export async function POST(
 
   // Activate pool if first email send
   if (pool.status === "APPROVED") {
-    await db.$transaction(async (tx) => {
+    await db.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.pool.update({
         where: { id: poolId },
         data: { status: "ACTIVE", activatedAt: new Date() },
