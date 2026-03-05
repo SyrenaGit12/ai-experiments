@@ -68,72 +68,64 @@ export async function generatePool(
   }
 
   // Persist: Create pool, members, pairs, scores in a transaction
-  const result = await db.$transaction(async (tx: Prisma.TransactionClient) => {
-    // Create the pool
-    const pool = await tx.pool.create({
-      data: {
-        industry,
-        status: "DRAFT",
-        minInvestors,
-        maxInvestors,
-        minFounders,
-        maxFounders,
-        slaHours,
-      },
-    })
+  // Timeout raised to 60s — real pools can generate hundreds of pairs
+  const result = await db.$transaction(
+    async (tx: Prisma.TransactionClient) => {
+      // Create the pool
+      const pool = await tx.pool.create({
+        data: {
+          industry,
+          status: "DRAFT",
+          minInvestors,
+          maxInvestors,
+          minFounders,
+          maxFounders,
+          slaHours,
+        },
+      })
 
-    // Create pool members
-    const investorMembers = await Promise.all(
-      finalInvestors.map((inv) =>
-        tx.poolMember.create({
-          data: {
-            poolId: pool.id,
-            userId: inv.investor.userId,
-            side: "INVESTOR",
-            investorTier: inv.tier,
-            displayName: [inv.investor.firstName, inv.investor.lastName]
-              .filter(Boolean)
-              .join(" "),
-            email: inv.investor.email,
-            engagementScore: inv.engagementScore,
-          },
-        })
-      )
-    )
+      // Batch-create pool members
+      await tx.poolMember.createMany({
+        data: finalInvestors.map((inv) => ({
+          poolId: pool.id,
+          userId: inv.investor.userId,
+          side: "INVESTOR" as const,
+          investorTier: inv.tier,
+          displayName: [inv.investor.firstName, inv.investor.lastName]
+            .filter(Boolean)
+            .join(" "),
+          email: inv.investor.email,
+          engagementScore: inv.engagementScore,
+        })),
+      })
 
-    const founderMembers = await Promise.all(
-      finalFounders.map((fnd) =>
-        tx.poolMember.create({
-          data: {
-            poolId: pool.id,
-            userId: fnd.userId,
-            side: "FOUNDER",
-            displayName: [fnd.firstName, fnd.lastName]
-              .filter(Boolean)
-              .join(" "),
-            email: fnd.email,
-            engagementScore: 0,
-          },
-        })
-      )
-    )
+      await tx.poolMember.createMany({
+        data: finalFounders.map((fnd) => ({
+          poolId: pool.id,
+          userId: fnd.userId,
+          side: "FOUNDER" as const,
+          displayName: [fnd.firstName, fnd.lastName]
+            .filter(Boolean)
+            .join(" "),
+          email: fnd.email,
+          engagementScore: 0,
+        })),
+      })
 
-    // Create pairs with scores
-    const pairs = []
-    const scores = []
-    let rank = 0
+      // Build pair + score data
+      const pairData: Prisma.PoolPairCreateManyInput[] = []
+      let rank = 0
 
-    for (const inv of finalInvestors) {
-      const investorScores = pairScores.get(inv.investor.userId)
-      if (!investorScores) continue
+      for (const inv of finalInvestors) {
+        const investorScores = pairScores.get(inv.investor.userId)
+        if (!investorScores) continue
 
-      for (const fnd of finalFounders) {
-        const scoreBreakdown = investorScores.get(fnd.userId)
-        if (!scoreBreakdown) continue
+        for (const fnd of finalFounders) {
+          const scoreBreakdown = investorScores.get(fnd.userId)
+          if (!scoreBreakdown) continue
 
-        rank++
-        const pair = await tx.poolPair.create({
-          data: {
+          rank++
+          pairData.push({
             poolId: pool.id,
             investorId: inv.investor.userId,
             founderId: fnd.userId,
@@ -147,13 +139,41 @@ export async function generatePool(
               .filter(Boolean)
               .join(" "),
             founderEmail: fnd.email,
-          },
-        })
-        pairs.push(pair)
+          })
+        }
+      }
 
-        const matchScore = await tx.matchScore.create({
-          data: {
-            poolPairId: pair.id,
+      // Batch-create pairs
+      await tx.poolPair.createMany({ data: pairData })
+
+      // Fetch created pairs to get IDs for match scores
+      const createdPairs = await tx.poolPair.findMany({
+        where: { poolId: pool.id },
+      })
+
+      // Build a lookup: investorId:founderId → pairId
+      const pairIdMap = new Map(
+        createdPairs.map((p) => [`${p.investorId}:${p.founderId}`, p.id])
+      )
+
+      // Batch-create match scores
+      const scoreData: Prisma.MatchScoreCreateManyInput[] = []
+
+      for (const inv of finalInvestors) {
+        const investorScores = pairScores.get(inv.investor.userId)
+        if (!investorScores) continue
+
+        for (const fnd of finalFounders) {
+          const scoreBreakdown = investorScores.get(fnd.userId)
+          if (!scoreBreakdown) continue
+
+          const pairId = pairIdMap.get(
+            `${inv.investor.userId}:${fnd.userId}`
+          )
+          if (!pairId) continue
+
+          scoreData.push({
+            poolPairId: pairId,
             investorId: inv.investor.userId,
             founderId: fnd.userId,
             totalScore: scoreBreakdown.totalScore,
@@ -162,33 +182,41 @@ export async function generatePool(
             stageScore: scoreBreakdown.stageScore,
             chequeSizeScore: scoreBreakdown.chequeSizeScore,
             engagementScore: scoreBreakdown.engagementScore,
-          },
-        })
-        scores.push(matchScore)
+          })
+        }
       }
-    }
 
-    // Log event
-    await tx.eventLedger.create({
-      data: {
-        type: "POOL_CREATED",
-        poolId: pool.id,
-        payload: {
-          industry,
-          investorCount: investorMembers.length,
-          founderCount: founderMembers.length,
-          pairCount: pairs.length,
+      await tx.matchScore.createMany({ data: scoreData })
+
+      // Log event
+      await tx.eventLedger.create({
+        data: {
+          type: "POOL_CREATED",
+          poolId: pool.id,
+          payload: {
+            industry,
+            investorCount: finalInvestors.length,
+            founderCount: finalFounders.length,
+            pairCount: pairData.length,
+          },
         },
-      },
-    })
+      })
 
-    return {
-      pool,
-      members: [...investorMembers, ...founderMembers],
-      pairs,
-      scores,
-    }
-  })
+      // Fetch full pool with members for return
+      const fullPool = await tx.pool.findUniqueOrThrow({
+        where: { id: pool.id },
+        include: { members: true, pairs: true },
+      })
+
+      return {
+        pool: fullPool,
+        members: fullPool.members,
+        pairs: createdPairs,
+        scores: [],
+      }
+    },
+    { timeout: 60000 }
+  )
 
   return result
 }
