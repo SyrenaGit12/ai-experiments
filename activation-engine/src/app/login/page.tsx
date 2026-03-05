@@ -21,6 +21,7 @@ export default function LoginPage() {
     })
 
     if (res.ok) {
+      router.refresh()
       router.push("/control-tower")
     } else {
       setError("Invalid password")

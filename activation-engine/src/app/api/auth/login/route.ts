@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server"
-import { cookies } from "next/headers"
 
 const COOKIE_NAME = "ct-auth"
 
@@ -11,8 +10,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid password" }, { status: 401 })
   }
 
-  const cookieStore = await cookies()
-  cookieStore.set(COOKIE_NAME, "authenticated", {
+  const response = NextResponse.json({ success: true })
+  response.cookies.set(COOKIE_NAME, "authenticated", {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
@@ -20,11 +19,17 @@ export async function POST(request: Request) {
     path: "/",
   })
 
-  return NextResponse.json({ success: true })
+  return response
 }
 
 export async function DELETE() {
-  const cookieStore = await cookies()
-  cookieStore.delete(COOKIE_NAME)
-  return NextResponse.json({ success: true })
+  const response = NextResponse.json({ success: true })
+  response.cookies.set(COOKIE_NAME, "", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    maxAge: 0,
+    path: "/",
+  })
+  return response
 }
