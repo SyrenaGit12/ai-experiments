@@ -28,8 +28,8 @@ export async function findMatchingFounders(
       f."createdAt", f."updatedAt",
       u.email, u."firstName", u."lastName", u."lastLogin",
       u.status as "userStatus"
-    FROM "Founder" f
-    JOIN "User" u ON f."userId" = u.id
+    FROM founders f
+    JOIN users u ON f."userId" = u.id
     WHERE u.status IN ('APPROVED', 'PROFILE_COMPLETED')
       AND ${industry} = ANY(f.industries)
   `) as FounderWithUser[]
@@ -45,7 +45,7 @@ export async function findMatchingFounders(
   if (investorIds.length > 0 && founderIds.length > 0) {
     const intros = await sql`
       SELECT "investorId", "founderId"
-      FROM "IntroRequest"
+      FROM intro_requests
       WHERE "investorId" = ANY(${investorIds})
         AND "founderId" = ANY(${founderIds})
         AND status IN ('ACCEPTED', 'REJECTED')

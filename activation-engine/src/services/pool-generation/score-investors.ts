@@ -55,8 +55,8 @@ export async function scoreInvestors(
       i."createdAt", i."updatedAt",
       u.email, u."firstName", u."lastName", u."lastLogin",
       u.status as "userStatus"
-    FROM "Investor" i
-    JOIN "User" u ON i."userId" = u.id
+    FROM investors i
+    JOIN users u ON i."userId" = u.id
     WHERE u.status IN ('APPROVED', 'PROFILE_COMPLETED')
       AND ${industry} = ANY(i.industries)
   `) as InvestorWithUser[]

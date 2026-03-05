@@ -12,7 +12,7 @@ export async function classifyUsers() {
   // Get all approved users from Syrena
   const syrenaUsers = await sql`
     SELECT u.id, u.role, u."lastLogin", u."createdAt"
-    FROM "User" u
+    FROM users u
     WHERE u.status IN ('APPROVED', 'PROFILE_COMPLETED')
       AND u.role IN ('FOUNDER', 'INVESTOR')
   `
