@@ -8,7 +8,10 @@ const links = [
   { href: "/control-tower/my-queue", label: "My Queue", icon: "⚡" },
   { href: "/control-tower/pipeline", label: "Pipeline", icon: "▸" },
   { href: "/control-tower/match-finder", label: "Match Finder", icon: "◎" },
+  { href: "/control-tower/new-joiners", label: "New Joiners", icon: "✦" },
   { href: "/control-tower/compose", label: "Compose Email", icon: "✉" },
+  { href: "/control-tower/emails", label: "Email Activity", icon: "↗" },
+  { href: "/control-tower/metrics", label: "Metrics", icon: "◆" },
   { href: "/control-tower/pools", label: "Pools (Legacy)", icon: "▤" },
 ]
 

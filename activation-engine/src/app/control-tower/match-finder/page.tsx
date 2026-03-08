@@ -2,6 +2,7 @@
 
 import { Suspense, useState } from "react"
 import { useSearchParams } from "next/navigation"
+import { useToast } from "@/components/ui/toast"
 import { SYRENA_INDUSTRIES } from "@/lib/constants"
 
 interface SyrenaResult {
@@ -50,22 +51,28 @@ function MatchFinderPage() {
   const [adding, setAdding] = useState<string | null>(null)
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set())
   const [message, setMessage] = useState("")
+  const toast = useToast()
 
   async function handleSearch() {
     setLoading(true)
     setMessage("")
-    const params = new URLSearchParams({ side })
-    if (industry) params.set("industry", industry)
-    if (search) params.set("search", search)
-    params.set("limit", "30")
+    try {
+      const params = new URLSearchParams({ side })
+      if (industry) params.set("industry", industry)
+      if (search) params.set("search", search)
+      params.set("limit", "30")
 
-    const res = await fetch(`/api/syrena/search?${params}`)
-    const data = await res.json()
-    setResults(data.results ?? [])
-    if ((data.results ?? []).length === 0) {
-      setMessage("No results found. Try adjusting your filters.")
+      const res = await fetch(`/api/syrena/search?${params}`)
+      const data = await res.json()
+      setResults(data.results ?? [])
+      if ((data.results ?? []).length === 0) {
+        setMessage("No results found. Try adjusting your filters.")
+      }
+    } catch {
+      toast.error("Search failed. Please try again.")
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   async function addToPipeline(user: SyrenaResult) {
@@ -86,9 +93,10 @@ function MatchFinderPage() {
       })
       if (res.ok) {
         setAddedIds((prev) => new Set(prev).add(user.userId))
+        toast.success("Added to pipeline")
       } else {
         const err = await res.json()
-        alert(`Error: ${err.error ?? "Failed to add"}`)
+        toast.error(`Error: ${err.error ?? "Failed to add"}`)
       }
     } finally {
       setAdding(null)
@@ -113,9 +121,10 @@ function MatchFinderPage() {
       })
       if (res.ok) {
         setAddedIds((prev) => new Set(prev).add(user.userId))
+        toast.success("Match added")
       } else {
         const err = await res.json()
-        alert(`Error: ${err.error ?? "Failed to add match"}`)
+        toast.error(`Error: ${err.error ?? "Failed to add match"}`)
       }
     } finally {
       setAdding(null)

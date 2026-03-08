@@ -102,6 +102,51 @@ export interface NewJoinerCandidate {
   signedUpAt: Date
 }
 
+// ─── Activation Records (Client-side) ────────────────
+
+export interface ActivationMatchClient {
+  id: string
+  matchName: string
+  matchCompany: string | null
+  selected: boolean
+  counterpartyResponse: string | null
+  introSent: boolean
+}
+
+export interface ActivationRecordClient {
+  id: string
+  syrenaUserId: string
+  side: "INVESTOR" | "FOUNDER"
+  name: string
+  email: string
+  company: string | null
+  industry: string
+  fundingStage: string | null
+  stage: string
+  owner: string | null
+  matchesSentAt: string | null
+  respondedAt: string | null
+  counterpartyAskedAt: string | null
+  counterpartyRespondedAt: string | null
+  outcome: string | null
+  activatedAt: string | null
+  notes: string | null
+  slaDeadline: string | null
+  createdAt: string
+  updatedAt: string
+  matches: ActivationMatchClient[]
+}
+
+// ─── API Response Types ─────────────────────────────
+
+export interface ActivationListResponse {
+  records: ActivationRecordClient[]
+  total: number
+  limit: number
+  offset: number
+  stageCounts?: Record<string, number>
+}
+
 // ─── Control Tower ───────────────────────────────────────
 
 export interface PoolWithCounts extends Pool {

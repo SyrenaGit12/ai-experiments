@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server"
 import db from "@/lib/db"
 
+/** Escape a string value for CSV: double-quote any embedded quotes */
+function csvEscape(value: string): string {
+  return value.replace(/"/g, '""')
+}
+
 /**
  * GET /api/activation/export
  * Export all activation records as CSV.
@@ -32,22 +37,22 @@ export async function GET() {
   ]
 
   const rows = records.map((r) => [
-    r.side,
-    r.name,
-    r.email,
-    r.company ?? "",
-    r.industry,
-    r.stage,
-    r.owner ?? "",
+    csvEscape(r.side),
+    csvEscape(r.name),
+    csvEscape(r.email),
+    csvEscape(r.company ?? ""),
+    csvEscape(r.industry),
+    csvEscape(r.stage),
+    csvEscape(r.owner ?? ""),
     r.matches.length.toString(),
     r.matchesSentAt?.toISOString() ?? "",
-    r.matches.find((m) => m.selected)?.matchName ?? "",
+    csvEscape(r.matches.find((m) => m.selected)?.matchName ?? ""),
     r.respondedAt?.toISOString() ?? "",
     r.counterpartyAskedAt?.toISOString() ?? "",
     r.counterpartyRespondedAt?.toISOString() ?? "",
-    r.outcome ?? "",
+    csvEscape(r.outcome ?? ""),
     r.activatedAt?.toISOString() ?? "",
-    (r.notes ?? "").replace(/"/g, '""'),
+    csvEscape(r.notes ?? ""),
     r.slaDeadline?.toISOString() ?? "",
   ])
 

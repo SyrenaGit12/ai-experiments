@@ -1,8 +1,10 @@
 "use client"
 
-import { useEffect, useState, useCallback, use } from "react"
+import { useEffect, useState, useCallback, useRef, use } from "react"
 import Link from "next/link"
 import { STAGE_LABELS_FULL, STAGE_ORDER, TEAM_MEMBERS } from "@/lib/constants"
+import { useToast } from "@/components/ui/toast"
+import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 
 interface ActivationMatch {
   id: string
@@ -77,6 +79,13 @@ export default function PipelineDetailPage({ params }: { params: Promise<{ id: s
   const [sendingBy, setSendingBy] = useState("")
   const [introMatchId, setIntroMatchId] = useState<string | null>(null) // which match is composing intro
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([])
+  const [confirmAction, setConfirmAction] = useState<{ stage: string; label: string } | null>(null)
+
+  // Dirty flags — protect user edits from being overwritten by auto-refresh
+  const notesDirty = useRef(false)
+  const ownerDirty = useRef(false)
+
+  const toast = useToast()
 
   const fetchActivity = useCallback(async () => {
     try {
@@ -90,59 +99,97 @@ export default function PipelineDetailPage({ params }: { params: Promise<{ id: s
     }
   }, [id])
 
-  const fetchRecord = useCallback(async () => {
-    const res = await fetch(`/api/activation/${id}`)
-    if (res.ok) {
-      const data = await res.json()
-      setRecord(data)
-      setEditNotes(data.notes ?? "")
-      setEditOwner(data.owner ?? "")
-      // Initialize feedback drafts from existing feedback (only for matches that have feedback)
-      const drafts: Record<string, string> = {}
-      for (const m of data.matches ?? []) {
-        if (m.feedback) drafts[m.id] = m.feedback
-      }
-      setFeedbackDrafts((prev) => {
-        // Merge: keep any in-progress drafts the user is typing
-        const merged = { ...drafts }
-        for (const [k, v] of Object.entries(prev)) {
-          if (v && !drafts[k]) merged[k] = v
+  const fetchRecord = useCallback(async (silent = false) => {
+    try {
+      const res = await fetch(`/api/activation/${id}`)
+      if (res.ok) {
+        const data = await res.json()
+        setRecord(data)
+        // Only overwrite editable fields if user hasn't started editing
+        if (!notesDirty.current) setEditNotes(data.notes ?? "")
+        if (!ownerDirty.current) setEditOwner(data.owner ?? "")
+        // Initialize feedback drafts from existing feedback (only for matches that have feedback)
+        const drafts: Record<string, string> = {}
+        for (const m of data.matches ?? []) {
+          if (m.feedback) drafts[m.id] = m.feedback
         }
-        return merged
-      })
+        setFeedbackDrafts((prev) => {
+          // Merge: keep any in-progress drafts the user is typing
+          const merged = { ...drafts }
+          for (const [k, v] of Object.entries(prev)) {
+            if (v && !drafts[k]) merged[k] = v
+          }
+          return merged
+        })
+      }
+      // Also refresh activity feed
+      fetchActivity()
+    } catch {
+      if (!silent) toast.error("Failed to load record")
+    } finally {
+      if (!silent) setLoading(false)
     }
-    setLoading(false)
-    // Also refresh activity feed
-    fetchActivity()
-  }, [id, fetchActivity])
+  }, [id, fetchActivity, toast])
 
   useEffect(() => {
     fetchRecord()
   }, [fetchRecord])
 
+  // Auto-refresh every 30s (silent — no loading flash, respects dirty flags)
+  useEffect(() => {
+    const interval = setInterval(() => fetchRecord(true), 30_000)
+    return () => clearInterval(interval)
+  }, [fetchRecord])
+
+  // Close modals on Escape key
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        if (introMatchId) setIntroMatchId(null)
+        else if (showSendConfirm && !saving) setShowSendConfirm(false)
+      }
+    }
+    if (showSendConfirm || introMatchId) {
+      document.addEventListener("keydown", handleKeyDown)
+      return () => document.removeEventListener("keydown", handleKeyDown)
+    }
+  }, [showSendConfirm, introMatchId, saving])
+
   async function updateRecord(patch: Record<string, unknown>) {
     setSaving(true)
-    // Include actor for audit trail (use current owner or "Control Tower")
-    const actor = record?.owner ?? "Control Tower"
-    await fetch(`/api/activation/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...patch, actor }),
-    })
-    await fetchRecord()
-    setSaving(false)
+    try {
+      // Include actor for audit trail (use current owner or "Control Tower")
+      const actor = record?.owner ?? "Control Tower"
+      await fetch(`/api/activation/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...patch, actor }),
+      })
+      await fetchRecord()
+      toast.success("Changes saved")
+    } catch {
+      toast.error("Failed to save changes")
+    } finally {
+      setSaving(false)
+    }
   }
 
   async function updateMatch(matchId: string, patch: Record<string, unknown>) {
     setSaving(true)
-    const actor = record?.owner ?? "Control Tower"
-    await fetch(`/api/activation/${id}/matches/${matchId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...patch, actor }),
-    })
-    await fetchRecord()
-    setSaving(false)
+    try {
+      const actor = record?.owner ?? "Control Tower"
+      await fetch(`/api/activation/${id}/matches/${matchId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...patch, actor }),
+      })
+      await fetchRecord()
+      toast.success("Changes saved")
+    } catch {
+      toast.error("Failed to update match")
+    } finally {
+      setSaving(false)
+    }
   }
 
   async function advanceStage(newStage: string) {
@@ -235,7 +282,7 @@ export default function PipelineDetailPage({ params }: { params: Promise<{ id: s
                 setSendingBy(record.owner ?? "")
                 setShowSendConfirm(true)
               }}
-              disabled={record.matches.length === 0}
+              disabled={saving || record.matches.length === 0}
               className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Mark S1: Matches Sent
@@ -244,7 +291,8 @@ export default function PipelineDetailPage({ params }: { params: Promise<{ id: s
           {record.stage === "S1_MATCHES_SENT" && (
             <button
               onClick={() => advanceStage("S2_USER_RESPONDED")}
-              className="px-4 py-2 bg-purple-600 text-white rounded-lg text-sm hover:bg-purple-500"
+              disabled={saving}
+              className="px-4 py-2 bg-purple-600 text-white rounded-lg text-sm hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Mark S2: User Responded
             </button>
@@ -252,7 +300,8 @@ export default function PipelineDetailPage({ params }: { params: Promise<{ id: s
           {record.stage === "S2_USER_RESPONDED" && (
             <button
               onClick={() => advanceStage("S3_COUNTERPARTY_ASKED")}
-              className="px-4 py-2 bg-amber-600 text-white rounded-lg text-sm hover:bg-amber-500"
+              disabled={saving}
+              className="px-4 py-2 bg-amber-600 text-white rounded-lg text-sm hover:bg-amber-500 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Mark S3: Counterparty Asked
             </button>
@@ -260,7 +309,8 @@ export default function PipelineDetailPage({ params }: { params: Promise<{ id: s
           {record.stage === "S3_COUNTERPARTY_ASKED" && (
             <button
               onClick={() => advanceStage("S3_FEEDBACK_RECEIVED")}
-              className="px-4 py-2 bg-cyan-600 text-white rounded-lg text-sm hover:bg-cyan-500"
+              disabled={saving}
+              className="px-4 py-2 bg-cyan-600 text-white rounded-lg text-sm hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Mark S3: Feedback Received
             </button>
@@ -268,7 +318,8 @@ export default function PipelineDetailPage({ params }: { params: Promise<{ id: s
           {record.stage === "S3_FEEDBACK_RECEIVED" && (
             <button
               onClick={() => advanceStage("ACTIVATED")}
-              className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-500"
+              disabled={saving}
+              className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Mark Activated ✓
             </button>
@@ -276,14 +327,16 @@ export default function PipelineDetailPage({ params }: { params: Promise<{ id: s
           {!["ACTIVATED", "STALLED", "DECLINED"].includes(record.stage) && (
             <>
               <button
-                onClick={() => advanceStage("STALLED")}
-                className="px-4 py-2 bg-gray-700 text-gray-300 rounded-lg text-sm hover:bg-gray-600"
+                onClick={() => setConfirmAction({ stage: "STALLED", label: "Stalled" })}
+                disabled={saving}
+                className="px-4 py-2 bg-gray-700 text-gray-300 rounded-lg text-sm hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Mark Stalled
               </button>
               <button
-                onClick={() => advanceStage("DECLINED")}
-                className="px-4 py-2 bg-gray-700 text-gray-300 rounded-lg text-sm hover:bg-gray-600"
+                onClick={() => setConfirmAction({ stage: "DECLINED", label: "Declined" })}
+                disabled={saving}
+                className="px-4 py-2 bg-gray-700 text-gray-300 rounded-lg text-sm hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Mark Declined
               </button>
@@ -292,7 +345,8 @@ export default function PipelineDetailPage({ params }: { params: Promise<{ id: s
           {["STALLED", "DECLINED"].includes(record.stage) && (
             <button
               onClick={() => advanceStage("NEW")}
-              className="px-4 py-2 bg-gray-700 text-gray-300 rounded-lg text-sm hover:bg-gray-600"
+              disabled={saving}
+              className="px-4 py-2 bg-gray-700 text-gray-300 rounded-lg text-sm hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Reopen as New
             </button>
@@ -312,7 +366,7 @@ export default function PipelineDetailPage({ params }: { params: Promise<{ id: s
               <div className="flex gap-2">
                 <select
                   value={editOwner}
-                  onChange={(e) => setEditOwner(e.target.value)}
+                  onChange={(e) => { setEditOwner(e.target.value); ownerDirty.current = true }}
                   className="flex-1 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm"
                 >
                   <option value="">Unassigned</option>
@@ -321,8 +375,9 @@ export default function PipelineDetailPage({ params }: { params: Promise<{ id: s
                   ))}
                 </select>
                 <button
-                  onClick={() => updateRecord({ owner: editOwner || null })}
-                  className="px-3 py-2 bg-gray-700 text-white rounded-lg text-sm hover:bg-gray-600"
+                  onClick={() => { updateRecord({ owner: editOwner || null }); ownerDirty.current = false }}
+                  disabled={saving}
+                  className="px-3 py-2 bg-gray-700 text-white rounded-lg text-sm hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Save
                 </button>
@@ -333,14 +388,15 @@ export default function PipelineDetailPage({ params }: { params: Promise<{ id: s
               <label className="text-xs text-gray-500 block mb-1">Notes</label>
               <textarea
                 value={editNotes}
-                onChange={(e) => setEditNotes(e.target.value)}
+                onChange={(e) => { setEditNotes(e.target.value); notesDirty.current = true }}
                 rows={4}
                 className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm resize-none"
                 placeholder="Add notes about this activation..."
               />
               <button
-                onClick={() => updateRecord({ notes: editNotes })}
-                className="mt-2 px-3 py-2 bg-gray-700 text-white rounded-lg text-sm hover:bg-gray-600"
+                onClick={() => { updateRecord({ notes: editNotes }); notesDirty.current = false }}
+                disabled={saving}
+                className="mt-2 px-3 py-2 bg-gray-700 text-white rounded-lg text-sm hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Save Notes
               </button>
@@ -498,7 +554,8 @@ export default function PipelineDetailPage({ params }: { params: Promise<{ id: s
                     {!match.selected && (
                       <button
                         onClick={() => updateMatch(match.id, { selected: true })}
-                        className="px-2.5 py-1 bg-green-800 text-green-200 rounded text-xs hover:bg-green-700"
+                        disabled={saving}
+                        className="px-2.5 py-1 bg-green-800 text-green-200 rounded text-xs hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         Select
                       </button>
@@ -507,13 +564,15 @@ export default function PipelineDetailPage({ params }: { params: Promise<{ id: s
                       <div className="flex gap-1">
                         <button
                           onClick={() => updateMatch(match.id, { counterpartyResponse: "interested" })}
-                          className="px-2.5 py-1 bg-green-800 text-green-200 rounded text-xs hover:bg-green-700"
+                          disabled={saving}
+                          className="px-2.5 py-1 bg-green-800 text-green-200 rounded text-xs hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           CP: Yes
                         </button>
                         <button
                           onClick={() => updateMatch(match.id, { counterpartyResponse: "declined" })}
-                          className="px-2.5 py-1 bg-red-800 text-red-200 rounded text-xs hover:bg-red-700"
+                          disabled={saving}
+                          className="px-2.5 py-1 bg-red-800 text-red-200 rounded text-xs hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           CP: No
                         </button>
@@ -522,7 +581,8 @@ export default function PipelineDetailPage({ params }: { params: Promise<{ id: s
                     {match.selected && match.counterpartyResponse === "interested" && !match.introSent && (
                       <button
                         onClick={() => setIntroMatchId(match.id)}
-                        className="px-2.5 py-1 bg-blue-800 text-blue-200 rounded text-xs hover:bg-blue-700"
+                        disabled={saving}
+                        className="px-2.5 py-1 bg-blue-800 text-blue-200 rounded text-xs hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         Compose Intro
                       </button>
@@ -559,7 +619,7 @@ export default function PipelineDetailPage({ params }: { params: Promise<{ id: s
                           const text = feedbackDrafts[match.id]?.trim()
                           if (text) updateMatch(match.id, { feedback: text })
                         }}
-                        disabled={!feedbackDrafts[match.id]?.trim() || feedbackDrafts[match.id]?.trim() === match.feedback}
+                        disabled={saving || !feedbackDrafts[match.id]?.trim() || feedbackDrafts[match.id]?.trim() === match.feedback}
                         className="px-2.5 py-1.5 bg-gray-700 text-gray-200 rounded text-xs hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         Save
@@ -567,7 +627,8 @@ export default function PipelineDetailPage({ params }: { params: Promise<{ id: s
                       {match.feedback && !match.feedbackDelivered && (
                         <button
                           onClick={() => updateMatch(match.id, { feedbackDelivered: true })}
-                          className="px-2.5 py-1.5 bg-purple-800 text-purple-200 rounded text-xs hover:bg-purple-700"
+                          disabled={saving}
+                          className="px-2.5 py-1.5 bg-purple-800 text-purple-200 rounded text-xs hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           Mark Delivered
                         </button>
@@ -596,8 +657,8 @@ export default function PipelineDetailPage({ params }: { params: Promise<{ id: s
 
       {/* Send Confirmation Modal */}
       {showSendConfirm && record && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 max-w-lg w-full">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => !saving && setShowSendConfirm(false)}>
+          <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 max-w-lg w-full" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-white font-semibold text-lg mb-3">Confirm: Mark Matches Sent</h3>
             <p className="text-gray-400 text-sm mb-4">
               You are marking that {record.matches.length} match{record.matches.length !== 1 ? "es" : ""} have been sent to <strong className="text-white">{record.name}</strong>.
@@ -638,9 +699,10 @@ export default function PipelineDetailPage({ params }: { params: Promise<{ id: s
                   })
                   setShowSendConfirm(false)
                 }}
-                disabled={!sendingBy}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={saving || !sendingBy}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               >
+                {saving && <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
                 Confirm Sent
               </button>
             </div>
@@ -666,8 +728,8 @@ Best,
 Syrena Team`
 
         return (
-          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-            <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 max-w-2xl w-full">
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => setIntroMatchId(null)}>
+            <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 max-w-2xl w-full" onClick={(e) => e.stopPropagation()}>
               <h3 className="text-white font-semibold text-lg mb-3">Compose Intro Email</h3>
               <p className="text-gray-400 text-sm mb-4">
                 Copy this template to send the intro between{" "}
@@ -706,6 +768,7 @@ Syrena Team`
                 <button
                   onClick={() => {
                     navigator.clipboard.writeText(`To: ${record.email}, ${match.matchEmail}\nSubject: ${subjectLine}\n\n${bodyTemplate}`)
+                    toast.success("Intro email copied to clipboard!")
                   }}
                   className="px-4 py-2 bg-gray-700 text-gray-300 rounded-lg text-sm hover:bg-gray-600 border border-gray-600"
                 >
@@ -716,8 +779,10 @@ Syrena Team`
                     await updateMatch(match.id, { introSent: true })
                     setIntroMatchId(null)
                   }}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-500"
+                  disabled={saving}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                 >
+                  {saving && <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
                   Mark Intro Sent
                 </button>
               </div>
@@ -725,6 +790,22 @@ Syrena Team`
           </div>
         )
       })()}
+
+      <ConfirmDialog
+        open={!!confirmAction}
+        onConfirm={async () => {
+          if (confirmAction) {
+            await advanceStage(confirmAction.stage)
+          }
+          setConfirmAction(null)
+        }}
+        onCancel={() => setConfirmAction(null)}
+        title={`Mark as ${confirmAction?.label ?? ""}?`}
+        description={`This will move "${record?.name ?? "this record"}" to ${confirmAction?.label ?? ""} status. This action is typically irreversible.`}
+        confirmLabel={`Mark ${confirmAction?.label ?? ""}`}
+        variant="warning"
+        loading={saving}
+      />
     </div>
   )
 }

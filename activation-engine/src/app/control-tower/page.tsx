@@ -1,109 +1,125 @@
-import db from "@/lib/db"
+"use client"
+
+import { useState, useEffect, useCallback } from "react"
 import Link from "next/link"
 import { WEEKLY_TARGETS, STAGE_LABELS, STAGE_BAR_COLORS } from "@/lib/constants"
 
-/** Get the start of the current ISO week (Monday 00:00 UTC) */
-function getISOWeekStart(): Date {
-  const now = new Date()
-  const day = now.getUTCDay() // 0=Sun, 1=Mon, ..., 6=Sat
-  const diff = day === 0 ? 6 : day - 1 // Days since Monday
-  const monday = new Date(Date.UTC(
-    now.getUTCFullYear(),
-    now.getUTCMonth(),
-    now.getUTCDate() - diff,
-    0, 0, 0, 0
-  ))
-  return monday
+// ─── Types ────────────────────────────────────────────
+
+interface RecentRecord {
+  id: string
+  name: string
+  side: string
+  stage: string
+  updatedAt: string
+  company: string | null
 }
 
-async function getDashboardStats() {
-  const now = new Date()
-  const weekStart = getISOWeekStart()
+interface OwnerCount {
+  owner: string
+  count: number
+}
 
-  const [
-    totalRecords,
-    activatedThisWeek,
-    slaOverdue,
-    byStageRaw,
-    bySideRaw,
-    byOwnerRaw,
-    recentActivity,
-    activatedFoundersThisWeek,
-    activatedInvestorsThisWeek,
-    totalMatches,
-    introsSent,
-  ] = await Promise.all([
-    db.activationRecord.count(),
-    db.activationRecord.count({
-      where: { activatedAt: { gte: weekStart } },
-    }),
-    db.activationRecord.count({
-      where: {
-        slaDeadline: { lt: now },
-        stage: { notIn: ["ACTIVATED", "STALLED", "DECLINED"] },
-      },
-    }),
-    db.activationRecord.groupBy({ by: ["stage"], _count: true }),
-    db.activationRecord.groupBy({ by: ["side"], _count: true }),
-    db.activationRecord.groupBy({
-      by: ["owner"],
-      _count: true,
-      where: {
-        owner: { not: null },
-        stage: { notIn: ["ACTIVATED", "STALLED", "DECLINED"] },
-      },
-      orderBy: { _count: { owner: "desc" } },
-    }),
-    db.activationRecord.findMany({
-      orderBy: { updatedAt: "desc" },
-      take: 10,
-      select: {
-        id: true,
-        name: true,
-        side: true,
-        stage: true,
-        updatedAt: true,
-        company: true,
-      },
-    }),
-    db.activationRecord.count({
-      where: { activatedAt: { gte: weekStart }, side: "FOUNDER" },
-    }),
-    db.activationRecord.count({
-      where: { activatedAt: { gte: weekStart }, side: "INVESTOR" },
-    }),
-    db.activationMatch.count(),
-    db.activationMatch.count({ where: { introSent: true } }),
-  ])
+interface DashboardStats {
+  total: number
+  activatedThisWeek: number
+  overdue: number
+  stages: Record<string, number>
+  sides: Record<string, number>
+  owners: OwnerCount[]
+  recentActivity: RecentRecord[]
+  activatedFoundersThisWeek: number
+  activatedInvestorsThisWeek: number
+  totalMatches: number
+  introsSent: number
+}
 
-  const byStage = Object.fromEntries(
-    byStageRaw.map((s) => [s.stage, s._count])
-  )
-  const bySide = Object.fromEntries(
-    bySideRaw.map((s) => [s.side, s._count])
-  )
-  const byOwner = byOwnerRaw
-    .filter((o) => o.owner)
-    .map((o) => ({ owner: o.owner as string, count: o._count }))
+// ─── Helpers ──────────────────────────────────────────
 
-  return {
-    totalRecords,
-    activatedThisWeek,
-    slaOverdue,
-    byStage,
-    bySide,
-    byOwner,
-    recentActivity,
-    activatedFoundersThisWeek,
-    activatedInvestorsThisWeek,
-    totalMatches,
-    introsSent,
+function timeAgo(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return "just now"
+  if (mins < 60) return `${mins}m ago`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  return `${days}d ago`
+}
+
+const FUNNEL_STAGES = [
+  "NEW",
+  "S1_MATCHES_SENT",
+  "S2_USER_RESPONDED",
+  "S3_COUNTERPARTY_ASKED",
+  "S3_FEEDBACK_RECEIVED",
+  "ACTIVATED",
+]
+
+const AUTO_REFRESH_MS = 30_000
+
+// ─── Component ────────────────────────────────────────
+
+export default function DashboardPage() {
+  const [stats, setStats] = useState<DashboardStats | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [lastRefresh, setLastRefresh] = useState<Date>(new Date())
+
+  const fetchStats = useCallback(async () => {
+    try {
+      const res = await fetch("/api/activation/stats")
+      if (!res.ok) throw new Error(`Failed to load stats (${res.status})`)
+      const data: DashboardStats = await res.json()
+      setStats(data)
+      setError(null)
+      setLastRefresh(new Date())
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load dashboard")
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  // Initial fetch + auto-refresh every 30s
+  useEffect(() => {
+    fetchStats()
+    const interval = setInterval(fetchStats, AUTO_REFRESH_MS)
+    return () => clearInterval(interval)
+  }, [fetchStats])
+
+  // Loading state
+  if (loading && !stats) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="text-center">
+          <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+          <p className="text-sm text-gray-400">Loading dashboard…</p>
+        </div>
+      </div>
+    )
   }
-}
 
-export default async function DashboardPage() {
-  const stats = await getDashboardStats()
+  // Error state
+  if (error && !stats) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
+        <div className="text-5xl">⚠️</div>
+        <h2 className="text-xl font-semibold text-white">Dashboard Error</h2>
+        <p className="text-sm text-gray-400">{error}</p>
+        <button
+          onClick={fetchStats}
+          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 text-sm"
+        >
+          Retry
+        </button>
+      </div>
+    )
+  }
 
+  if (!stats) return null
+
+  // Calculations
   const founderPct = Math.min(
     100,
     Math.round((stats.activatedFoundersThisWeek / WEEKLY_TARGETS.founders) * 100)
@@ -112,18 +128,9 @@ export default async function DashboardPage() {
     100,
     Math.round((stats.activatedInvestorsThisWeek / WEEKLY_TARGETS.investors) * 100)
   )
-
-  const funnelStages = [
-    "NEW",
-    "S1_MATCHES_SENT",
-    "S2_USER_RESPONDED",
-    "S3_COUNTERPARTY_ASKED",
-    "S3_FEEDBACK_RECEIVED",
-    "ACTIVATED",
-  ]
   const maxFunnelCount = Math.max(
     1,
-    ...funnelStages.map((s) => stats.byStage[s] ?? 0)
+    ...FUNNEL_STAGES.map((s) => stats.stages[s] ?? 0)
   )
 
   return (
@@ -133,9 +140,19 @@ export default async function DashboardPage() {
           <h1 className="text-2xl font-bold text-white">Dashboard</h1>
           <p className="text-sm text-gray-400 mt-1">
             Activation Workspace Overview
+            <span className="text-gray-600 ml-2">
+              · Updated {timeAgo(lastRefresh.toISOString())}
+            </span>
           </p>
         </div>
         <div className="flex gap-2">
+          <button
+            onClick={fetchStats}
+            className="px-3 py-2 bg-gray-800 text-gray-400 rounded-lg text-sm hover:bg-gray-700 hover:text-gray-300 border border-gray-700 transition-colors"
+            title="Refresh now"
+          >
+            ↻
+          </button>
           <Link
             href="/control-tower/pipeline"
             className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-500 transition-colors"
@@ -151,13 +168,20 @@ export default async function DashboardPage() {
         </div>
       </div>
 
+      {/* Error banner (for refresh errors when we already have data) */}
+      {error && (
+        <div className="mb-4 p-3 bg-red-900/30 border border-red-800 rounded-lg text-sm text-red-300">
+          ⚠ Refresh failed: {error} — showing last known data
+        </div>
+      )}
+
       {/* Top Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
         <div className="p-5 bg-gray-900 rounded-xl border border-gray-800">
           <p className="text-gray-400 text-xs uppercase tracking-wide">Pipeline</p>
-          <p className="text-3xl font-bold text-white mt-1">{stats.totalRecords}</p>
+          <p className="text-3xl font-bold text-white mt-1">{stats.total}</p>
           <p className="text-gray-500 text-xs mt-1">
-            {stats.bySide["INVESTOR"] ?? 0} inv &middot; {stats.bySide["FOUNDER"] ?? 0} fdr
+            {stats.sides["INVESTOR"] ?? 0} inv &middot; {stats.sides["FOUNDER"] ?? 0} fdr
           </p>
         </div>
         <div className="p-5 bg-gray-900 rounded-xl border border-gray-800">
@@ -166,8 +190,8 @@ export default async function DashboardPage() {
         </div>
         <div className="p-5 bg-gray-900 rounded-xl border border-gray-800">
           <p className="text-gray-400 text-xs uppercase tracking-wide">SLA Overdue</p>
-          <p className={`text-3xl font-bold mt-1 ${stats.slaOverdue > 0 ? "text-red-400" : "text-white"}`}>
-            {stats.slaOverdue}
+          <p className={`text-3xl font-bold mt-1 ${stats.overdue > 0 ? "text-red-400" : "text-white"}`}>
+            {stats.overdue}
           </p>
         </div>
         <div className="p-5 bg-gray-900 rounded-xl border border-gray-800">
@@ -228,8 +252,8 @@ export default async function DashboardPage() {
             Pipeline Funnel
           </h2>
           <div className="space-y-2">
-            {funnelStages.map((stage) => {
-              const count = stats.byStage[stage] ?? 0
+            {FUNNEL_STAGES.map((stage) => {
+              const count = stats.stages[stage] ?? 0
               const pct = Math.round((count / maxFunnelCount) * 100)
               return (
                 <div key={stage} className="flex items-center gap-3">
@@ -249,9 +273,9 @@ export default async function DashboardPage() {
               )
             })}
           </div>
-          {(stats.byStage["STALLED"] ?? 0) + (stats.byStage["DECLINED"] ?? 0) > 0 && (
+          {(stats.stages["STALLED"] ?? 0) + (stats.stages["DECLINED"] ?? 0) > 0 && (
             <p className="text-gray-600 text-xs mt-3">
-              + {stats.byStage["STALLED"] ?? 0} stalled, {stats.byStage["DECLINED"] ?? 0} declined
+              + {stats.stages["STALLED"] ?? 0} stalled, {stats.stages["DECLINED"] ?? 0} declined
             </p>
           )}
         </div>
@@ -264,11 +288,11 @@ export default async function DashboardPage() {
           <h2 className="text-sm font-semibold text-white uppercase tracking-wide mb-4">
             Team Workload (Active)
           </h2>
-          {stats.byOwner.length === 0 ? (
+          {stats.owners.length === 0 ? (
             <p className="text-gray-500 text-sm">No records assigned yet</p>
           ) : (
             <div className="space-y-2">
-              {stats.byOwner.map((o) => (
+              {stats.owners.map((o) => (
                 <div key={o.owner} className="flex items-center justify-between">
                   <span className="text-sm text-gray-300">{o.owner}</span>
                   <span className="text-sm font-medium text-white bg-gray-800 px-3 py-0.5 rounded-full">
@@ -310,7 +334,7 @@ export default async function DashboardPage() {
                     {STAGE_LABELS[rec.stage] ?? rec.stage}
                   </span>
                   <span className="text-xs text-gray-600">
-                    {new Date(rec.updatedAt).toLocaleDateString()}
+                    {timeAgo(rec.updatedAt)}
                   </span>
                 </div>
               </Link>

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
+import { useToast } from "@/components/ui/toast"
 import { SYRENA_INDUSTRIES } from "@/lib/constants"
 
 interface PoolRow {
@@ -19,6 +20,7 @@ export default function PoolsPage() {
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
   const [selectedIndustry, setSelectedIndustry] = useState("")
+  const toast = useToast()
 
   useEffect(() => {
     fetchPools()
@@ -44,7 +46,7 @@ export default function PoolsPage() {
         await fetchPools()
       } else {
         const err = await res.json()
-        alert(`Generation failed: ${err.error}`)
+        toast.error(err.error || "Pool generation failed")
       }
     } finally {
       setGenerating(false)

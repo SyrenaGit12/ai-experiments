@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
 import Link from "next/link"
+import { useToast } from "@/components/ui/toast"
 import { StageProgress } from "@/components/control-tower/stage-progress"
 import { CrossMatchMatrix } from "@/components/control-tower/cross-match-matrix"
 import { PersonalizationReview } from "@/components/control-tower/personalization-review"
@@ -90,6 +91,7 @@ export default function PoolDetailPage() {
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<Tab>("stage-progress")
   const [actionLoading, setActionLoading] = useState("")
+  const toast = useToast()
 
   // Modal state
   const [selectionMember, setSelectionMember] = useState<PoolMember | null>(null)
@@ -122,7 +124,7 @@ export default function PoolDetailPage() {
     })
     if (!res.ok) {
       const err = await res.json()
-      alert(err.error)
+      toast.error(err.error || "Failed to send emails")
     }
     await fetchPool()
     setActionLoading("")

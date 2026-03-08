@@ -3,6 +3,7 @@ import { z } from "zod"
 import db from "@/lib/db"
 import { STAGES, TEAM_MEMBERS } from "@/lib/constants"
 import { logStageChange, logOwnerChange, logNotesUpdate, logActivity } from "@/lib/activity-log"
+import { getStageTransitionFields } from "@/lib/stage-transitions"
 
 // ─── Validation Schema ──────────────────────────────────
 const updateActivationSchema = z.object({
@@ -87,26 +88,9 @@ export async function PATCH(
   if (input.outcome !== undefined) data.outcome = input.outcome
   if (input.selectedMatchId !== undefined) data.selectedMatchId = input.selectedMatchId
 
-  // Stage transitions with timestamps
-  if (input.stage === "S1_MATCHES_SENT") {
-    data.matchesSentAt = new Date()
-    data.matchesSentBy = input.actor ?? null
-    // Set SLA: 48 hours from now
-    data.slaDeadline = new Date(Date.now() + 48 * 60 * 60 * 1000)
-  }
-  if (input.stage === "S2_USER_RESPONDED") {
-    data.respondedAt = new Date()
-  }
-  if (input.stage === "S3_COUNTERPARTY_ASKED") {
-    data.counterpartyAskedAt = new Date()
-    data.slaDeadline = new Date(Date.now() + 48 * 60 * 60 * 1000)
-  }
-  if (input.stage === "S3_FEEDBACK_RECEIVED") {
-    data.counterpartyRespondedAt = new Date()
-  }
-  if (input.stage === "ACTIVATED") {
-    data.activatedAt = new Date()
-    data.slaDeadline = null
+  // Stage transitions — apply timestamp side-effects
+  if (input.stage) {
+    Object.assign(data, getStageTransitionFields(input.stage, input.actor))
   }
 
   const record = await db.activationRecord.update({
@@ -149,6 +133,21 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
+
+  // Fetch name for audit log before deleting
+  const record = await db.activationRecord.findUnique({
+    where: { id },
+    select: { name: true },
+  })
+
   await db.activationRecord.delete({ where: { id } })
+
+  // Non-blocking audit log
+  logActivity({
+    activationRecordId: id,
+    action: "record_deleted",
+    detail: `Record deleted: ${record?.name ?? id}`,
+  })
+
   return NextResponse.json({ ok: true })
 }

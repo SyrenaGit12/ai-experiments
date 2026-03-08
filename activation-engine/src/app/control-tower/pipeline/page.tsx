@@ -3,44 +3,16 @@
 import { useEffect, useState, useCallback, useRef } from "react"
 import Link from "next/link"
 import { STAGES, STAGE_LABELS, STAGE_BADGE_COLORS, TEAM_MEMBERS, SYRENA_INDUSTRIES } from "@/lib/constants"
-
-interface ActivationMatch {
-  id: string
-  matchName: string
-  matchCompany: string | null
-  selected: boolean
-  counterpartyResponse: string | null
-  introSent: boolean
-}
-
-interface ActivationRecord {
-  id: string
-  syrenaUserId: string
-  side: "INVESTOR" | "FOUNDER"
-  name: string
-  email: string
-  company: string | null
-  industry: string
-  fundingStage: string | null
-  stage: string
-  owner: string | null
-  matchesSentAt: string | null
-  respondedAt: string | null
-  counterpartyAskedAt: string | null
-  counterpartyRespondedAt: string | null
-  outcome: string | null
-  activatedAt: string | null
-  notes: string | null
-  slaDeadline: string | null
-  createdAt: string
-  updatedAt: string
-  matches: ActivationMatch[]
-}
+import type { ActivationRecordClient as ActivationRecord, ActivationListResponse } from "@/lib/types"
+import { useToast } from "@/components/ui/toast"
+import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 
 export default function PipelinePage() {
   const [records, setRecords] = useState<ActivationRecord[]>([])
   const [total, setTotal] = useState(0)
+  const [stageCounts, setStageCounts] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
+  const toast = useToast()
   const [page, setPage] = useState(0)
   const pageSize = 50
 
@@ -58,6 +30,7 @@ export default function PipelinePage() {
   const [bulkAction, setBulkAction] = useState("")
   const [bulkValue, setBulkValue] = useState("")
   const [bulkLoading, setBulkLoading] = useState(false)
+  const [showBulkConfirm, setShowBulkConfirm] = useState(false)
 
   // Debounce search: update searchQuery 300ms after user stops typing
   useEffect(() => {
@@ -70,23 +43,29 @@ export default function PipelinePage() {
     }
   }, [searchInput])
 
-  const fetchRecords = useCallback(async () => {
-    setLoading(true)
-    const params = new URLSearchParams()
-    if (filterSide) params.set("side", filterSide)
-    if (filterStage) params.set("stage", filterStage)
-    if (filterOwner) params.set("owner", filterOwner)
-    if (filterIndustry) params.set("industry", filterIndustry)
-    if (searchQuery) params.set("search", searchQuery)
-    params.set("limit", String(pageSize))
-    params.set("offset", String(page * pageSize))
+  const fetchRecords = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true)
+    try {
+      const params = new URLSearchParams()
+      if (filterSide) params.set("side", filterSide)
+      if (filterStage) params.set("stage", filterStage)
+      if (filterOwner) params.set("owner", filterOwner)
+      if (filterIndustry) params.set("industry", filterIndustry)
+      if (searchQuery) params.set("search", searchQuery)
+      params.set("limit", String(pageSize))
+      params.set("offset", String(page * pageSize))
 
-    const res = await fetch(`/api/activation?${params}`)
-    const data = await res.json()
-    setRecords(data.records ?? [])
-    setTotal(data.total ?? 0)
-    setLoading(false)
-  }, [filterSide, filterStage, filterOwner, filterIndustry, searchQuery, page])
+      const res = await fetch(`/api/activation?${params}`)
+      const data: ActivationListResponse = await res.json()
+      setRecords(data.records ?? [])
+      setTotal(data.total ?? 0)
+      setStageCounts(data.stageCounts ?? {})
+    } catch {
+      if (!silent) toast.error("Failed to load pipeline data")
+    } finally {
+      if (!silent) setLoading(false)
+    }
+  }, [filterSide, filterStage, filterOwner, filterIndustry, searchQuery, page, toast])
 
   // Reset to first page when filters change
   useEffect(() => {
@@ -100,6 +79,12 @@ export default function PipelinePage() {
 
   useEffect(() => {
     fetchRecords()
+  }, [fetchRecords])
+
+  // Auto-refresh every 30s (silent — no loading flash)
+  useEffect(() => {
+    const interval = setInterval(() => fetchRecords(true), 30_000)
+    return () => clearInterval(interval)
   }, [fetchRecords])
 
   function isSLAOverdue(rec: ActivationRecord) {
@@ -159,13 +144,15 @@ export default function PipelinePage() {
         setBulkAction("")
         setBulkValue("")
         await fetchRecords()
-        console.log(`Bulk action complete: ${data.updated} records updated`)
+        toast.success(`Bulk action complete: ${data.updated} records updated`)
       } else {
         const err = await res.json().catch(() => ({}))
         console.error("Bulk action failed:", err)
+        toast.error("Bulk action failed")
       }
     } catch (err) {
       console.error("Bulk action error:", err)
+      toast.error("Bulk action failed")
     } finally {
       setBulkLoading(false)
     }
@@ -266,10 +253,10 @@ export default function PipelinePage() {
         )}
       </div>
 
-      {/* Stage summary chips */}
+      {/* Stage summary chips — server-side totals, independent of pagination */}
       <div className="flex flex-wrap gap-2 mb-4">
         {STAGES.filter(s => !["STALLED", "DECLINED"].includes(s)).map((s) => {
-          const count = records.filter((r) => r.stage === s).length
+          const count = stageCounts[s] ?? 0
           return (
             <button
               key={s}
@@ -335,7 +322,13 @@ export default function PipelinePage() {
 
           {/* Execute button */}
           <button
-            onClick={executeBulkAction}
+            onClick={() => {
+              if (bulkAction === "delete") {
+                setShowBulkConfirm(true)
+              } else {
+                executeBulkAction()
+              }
+            }}
             disabled={
               bulkLoading ||
               !bulkAction ||
@@ -515,6 +508,19 @@ export default function PipelinePage() {
         )}
         </>
       )}
+      <ConfirmDialog
+        open={showBulkConfirm}
+        onConfirm={async () => {
+          setShowBulkConfirm(false)
+          await executeBulkAction()
+        }}
+        onCancel={() => setShowBulkConfirm(false)}
+        title={`Delete ${selectedIds.size} record${selectedIds.size === 1 ? "" : "s"}?`}
+        description="This will permanently remove the selected records from the pipeline. This action cannot be undone."
+        confirmLabel="Delete"
+        variant="danger"
+        loading={bulkLoading}
+      />
     </div>
   )
 }

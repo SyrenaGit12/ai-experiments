@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react"
 import Link from "next/link"
 import { STAGE_LABELS, STAGE_BADGE_COLORS, TEAM_MEMBERS } from "@/lib/constants"
+import { useToast } from "@/components/ui/toast"
 
 // ─── Types ─────────────────────────────────────────────
 interface MatchSummary {
@@ -212,20 +213,24 @@ export default function MyQueuePage() {
   const [data, setData] = useState<QueueData | null>(null)
   const [loading, setLoading] = useState(true)
   const [owner, setOwner] = useState<string>("")
+  const toast = useToast()
 
-  const fetchQueue = useCallback(async () => {
-    setLoading(true)
+  const fetchQueue = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true)
     try {
       const params = new URLSearchParams()
       if (owner) params.set("owner", owner)
       const res = await fetch(`/api/activation/queue?${params}`)
       if (res.ok) {
         setData(await res.json())
+      } else if (!silent) {
+        toast.error("Failed to load queue")
       }
     } catch (err) {
       console.error("Failed to fetch queue:", err)
+      if (!silent) toast.error("Failed to load queue")
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [owner])
 
@@ -233,9 +238,9 @@ export default function MyQueuePage() {
     fetchQueue()
   }, [fetchQueue])
 
-  // Auto-refresh every 30 seconds
+  // Auto-refresh every 30 seconds (silent — no loading flash)
   useEffect(() => {
-    const interval = setInterval(fetchQueue, 30000)
+    const interval = setInterval(() => fetchQueue(true), 30_000)
     return () => clearInterval(interval)
   }, [fetchQueue])
 
@@ -261,7 +266,7 @@ export default function MyQueuePage() {
             ))}
           </select>
           <button
-            onClick={fetchQueue}
+            onClick={() => fetchQueue()}
             disabled={loading}
             className="px-3 py-2 bg-gray-800 border border-gray-700 text-gray-300 text-sm rounded-lg hover:bg-gray-700 disabled:opacity-50 transition-colors"
           >

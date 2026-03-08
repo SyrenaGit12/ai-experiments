@@ -3,6 +3,7 @@ import { z } from "zod"
 import db from "@/lib/db"
 import { STAGES, TEAM_MEMBERS } from "@/lib/constants"
 import { logStageChange, logOwnerChange, logActivity } from "@/lib/activity-log"
+import { getStageTransitionFields } from "@/lib/stage-transitions"
 
 // ─── Validation Schema ──────────────────────────────────
 const bulkActionSchema = z.object({
@@ -96,27 +97,10 @@ export async function POST(request: Request) {
   } else if (action === "set_stage") {
     const newStage = value!
 
-    // Build update data with timestamp handling
-    const data: Record<string, unknown> = { stage: newStage }
-
-    if (newStage === "S1_MATCHES_SENT") {
-      data.matchesSentAt = new Date()
-      data.matchesSentBy = actor ?? null
-      data.slaDeadline = new Date(Date.now() + 48 * 60 * 60 * 1000)
-    }
-    if (newStage === "S2_USER_RESPONDED") {
-      data.respondedAt = new Date()
-    }
-    if (newStage === "S3_COUNTERPARTY_ASKED") {
-      data.counterpartyAskedAt = new Date()
-      data.slaDeadline = new Date(Date.now() + 48 * 60 * 60 * 1000)
-    }
-    if (newStage === "S3_FEEDBACK_RECEIVED") {
-      data.counterpartyRespondedAt = new Date()
-    }
-    if (newStage === "ACTIVATED") {
-      data.activatedAt = new Date()
-      data.slaDeadline = null
+    // Build update data with timestamp side-effects
+    const data: Record<string, unknown> = {
+      stage: newStage,
+      ...getStageTransitionFields(newStage, actor),
     }
 
     const result = await db.activationRecord.updateMany({

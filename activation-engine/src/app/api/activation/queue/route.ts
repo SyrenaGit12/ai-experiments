@@ -1,17 +1,19 @@
 import { NextResponse } from "next/server"
+import type { ActivationStage } from "@prisma/client"
 import db from "@/lib/db"
 
 /**
  * GET /api/activation/queue
  * Returns action-needed items grouped by urgency bucket.
  * Query params:
- *   owner - filter to a specific team member
+ *   owner - filter to a specific team member (only affects buckets 1,2,4,5)
  *
  * Buckets (in priority order):
  *   1. sla_overdue   - SLA deadline has passed, not terminal
  *   2. needs_action   - stuck in a stage that needs operator action
- *   3. new_unassigned - NEW stage, no owner assigned
+ *   3. new_unassigned - NEW stage, no owner assigned (always shows unassigned)
  *   4. sla_soon       - SLA deadline within 12 hours
+ *   5. waiting        - waiting for external response
  */
 export async function GET(request: Request) {
   const url = new URL(request.url)
@@ -26,72 +28,94 @@ export async function GET(request: Request) {
   }
   if (owner) baseWhere.owner = owner
 
-  // 1. SLA overdue — deadline passed, still in pipeline
-  const slaOverdue = await db.activationRecord.findMany({
-    where: {
-      ...baseWhere,
-      slaDeadline: { lt: now },
-    },
-    include: { matches: { select: { id: true, matchName: true, selected: true, introSent: true, counterpartyResponse: true } } },
-    orderBy: { slaDeadline: "asc" },
-    take: 50,
-  })
+  const matchSelect = { id: true, matchName: true, selected: true, introSent: true, counterpartyResponse: true }
 
-  // 2. Needs action — stages where operator must do something
-  //    S2_USER_RESPONDED: user replied, need to ask counterparty
-  //    S3_FEEDBACK_RECEIVED: feedback in, need to deliver/activate
-  const needsAction = await db.activationRecord.findMany({
-    where: {
-      ...baseWhere,
-      stage: { in: ["S2_USER_RESPONDED", "S3_FEEDBACK_RECEIVED"] },
-      // Exclude ones already in slaOverdue
-      OR: [
-        { slaDeadline: null },
-        { slaDeadline: { gte: now } },
-      ],
-    },
-    include: { matches: { select: { id: true, matchName: true, selected: true, introSent: true, counterpartyResponse: true } } },
-    orderBy: { updatedAt: "asc" }, // oldest first = most urgent
-    take: 50,
-  })
+  // ─── WHERE clauses (shared between findMany + count) ───
+  const slaOverdueWhere = {
+    ...baseWhere,
+    slaDeadline: { lt: now },
+  }
 
-  // 3. New & unassigned — need to be picked up by someone
-  const newUnassigned = await db.activationRecord.findMany({
-    where: {
-      stage: "NEW",
-      owner: owner ? owner : null, // if filtering by owner, show their NEW items; otherwise show unassigned
-      ...(owner ? {} : { owner: null }),
-    },
-    include: { matches: { select: { id: true, matchName: true, selected: true } } },
-    orderBy: { createdAt: "asc" },
-    take: 50,
-  })
+  const needsActionWhere = {
+    ...baseWhere,
+    stage: { in: ["S2_USER_RESPONDED", "S3_FEEDBACK_RECEIVED"] as ActivationStage[] },
+    OR: [
+      { slaDeadline: null },
+      { slaDeadline: { gte: now } },
+    ],
+  }
 
-  // 4. SLA deadline approaching (within 12 hours but not overdue)
-  const slaSoon = await db.activationRecord.findMany({
-    where: {
-      ...baseWhere,
-      slaDeadline: { gte: now, lt: twelveHoursFromNow },
-    },
-    include: { matches: { select: { id: true, matchName: true, selected: true, introSent: true, counterpartyResponse: true } } },
-    orderBy: { slaDeadline: "asc" },
-    take: 50,
-  })
+  // Bug fix: Always show NEW + unassigned items regardless of owner filter
+  const newUnassignedWhere = {
+    stage: "NEW" as const,
+    owner: null,
+  }
 
-  // 5. Waiting — S1 or S3_COUNTERPARTY_ASKED, waiting for external response
-  const waiting = await db.activationRecord.findMany({
-    where: {
-      ...baseWhere,
-      stage: { in: ["S1_MATCHES_SENT", "S3_COUNTERPARTY_ASKED"] },
-      OR: [
-        { slaDeadline: null },
-        { slaDeadline: { gte: twelveHoursFromNow } },
-      ],
-    },
-    include: { matches: { select: { id: true, matchName: true, selected: true, introSent: true } } },
-    orderBy: { updatedAt: "asc" },
-    take: 50,
-  })
+  const slaSoonWhere = {
+    ...baseWhere,
+    slaDeadline: { gte: now, lt: twelveHoursFromNow },
+  }
+
+  const waitingWhere = {
+    ...baseWhere,
+    stage: { in: ["S1_MATCHES_SENT", "S3_COUNTERPARTY_ASKED"] as ActivationStage[] },
+    OR: [
+      { slaDeadline: null },
+      { slaDeadline: { gte: twelveHoursFromNow } },
+    ],
+  }
+
+  // ─── Parallel fetch: data (capped at 50) + true counts ───
+  const [
+    slaOverdue,
+    needsAction,
+    newUnassigned,
+    slaSoon,
+    waiting,
+    slaOverdueCount,
+    needsActionCount,
+    newUnassignedCount,
+    slaSoonCount,
+    waitingCount,
+  ] = await Promise.all([
+    // Data queries (capped at 50 for UI performance)
+    db.activationRecord.findMany({
+      where: slaOverdueWhere,
+      include: { matches: { select: matchSelect } },
+      orderBy: { slaDeadline: "asc" },
+      take: 50,
+    }),
+    db.activationRecord.findMany({
+      where: needsActionWhere,
+      include: { matches: { select: matchSelect } },
+      orderBy: { updatedAt: "asc" },
+      take: 50,
+    }),
+    db.activationRecord.findMany({
+      where: newUnassignedWhere,
+      include: { matches: { select: { id: true, matchName: true, selected: true } } },
+      orderBy: { createdAt: "asc" },
+      take: 50,
+    }),
+    db.activationRecord.findMany({
+      where: slaSoonWhere,
+      include: { matches: { select: matchSelect } },
+      orderBy: { slaDeadline: "asc" },
+      take: 50,
+    }),
+    db.activationRecord.findMany({
+      where: waitingWhere,
+      include: { matches: { select: { id: true, matchName: true, selected: true, introSent: true } } },
+      orderBy: { updatedAt: "asc" },
+      take: 50,
+    }),
+    // True count queries (not capped)
+    db.activationRecord.count({ where: slaOverdueWhere }),
+    db.activationRecord.count({ where: needsActionWhere }),
+    db.activationRecord.count({ where: newUnassignedWhere }),
+    db.activationRecord.count({ where: slaSoonWhere }),
+    db.activationRecord.count({ where: waitingWhere }),
+  ])
 
   return NextResponse.json({
     slaOverdue,
@@ -100,12 +124,12 @@ export async function GET(request: Request) {
     slaSoon,
     waiting,
     counts: {
-      slaOverdue: slaOverdue.length,
-      needsAction: needsAction.length,
-      newUnassigned: newUnassigned.length,
-      slaSoon: slaSoon.length,
-      waiting: waiting.length,
-      total: slaOverdue.length + needsAction.length + newUnassigned.length + slaSoon.length + waiting.length,
+      slaOverdue: slaOverdueCount,
+      needsAction: needsActionCount,
+      newUnassigned: newUnassignedCount,
+      slaSoon: slaSoonCount,
+      waiting: waitingCount,
+      total: slaOverdueCount + needsActionCount + newUnassignedCount + slaSoonCount + waitingCount,
     },
   })
 }

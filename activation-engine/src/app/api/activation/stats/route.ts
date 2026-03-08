@@ -1,22 +1,57 @@
 import { NextResponse } from "next/server"
 import db from "@/lib/db"
 
+/** Get the start of the current ISO week (Monday 00:00 UTC) */
+function getISOWeekStart(): Date {
+  const now = new Date()
+  const day = now.getUTCDay() // 0=Sun, 1=Mon, ..., 6=Sat
+  const diff = day === 0 ? 6 : day - 1 // Days since Monday
+  const monday = new Date(Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate() - diff,
+    0, 0, 0, 0
+  ))
+  return monday
+}
+
 /**
  * GET /api/activation/stats
  * Dashboard statistics for the activation pipeline.
+ * Returns all data needed for the dashboard overview.
  */
 export async function GET() {
+  const now = new Date()
+  const weekStart = getISOWeekStart()
+
   const [
     totalRecords,
-    byStage,
-    bySide,
-    byOwner,
-    overdueCount,
     activatedThisWeek,
+    slaOverdue,
+    byStageRaw,
+    bySideRaw,
+    byOwnerRaw,
     recentActivity,
+    activatedFoundersThisWeek,
+    activatedInvestorsThisWeek,
+    totalMatches,
+    introsSent,
   ] = await Promise.all([
     // Total pipeline records
     db.activationRecord.count(),
+
+    // Activated this ISO week (since Monday 00:00 UTC)
+    db.activationRecord.count({
+      where: { activatedAt: { gte: weekStart } },
+    }),
+
+    // Overdue (SLA deadline passed, still in active stage)
+    db.activationRecord.count({
+      where: {
+        slaDeadline: { lt: now },
+        stage: { notIn: ["ACTIVATED", "STALLED", "DECLINED"] },
+      },
+    }),
 
     // Count by stage
     db.activationRecord.groupBy({
@@ -30,28 +65,15 @@ export async function GET() {
       _count: true,
     }),
 
-    // Count by owner
+    // Count by owner (active records only)
     db.activationRecord.groupBy({
       by: ["owner"],
       _count: true,
-      where: { owner: { not: null } },
-      orderBy: { _count: { owner: "desc" } },
-    }),
-
-    // Overdue (SLA deadline passed)
-    db.activationRecord.count({
       where: {
-        slaDeadline: { lt: new Date() },
+        owner: { not: null },
         stage: { notIn: ["ACTIVATED", "STALLED", "DECLINED"] },
       },
-    }),
-
-    // Activated this week (last 7 days)
-    db.activationRecord.count({
-      where: {
-        stage: "ACTIVATED",
-        activatedAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
-      },
+      orderBy: { _count: { owner: "desc" } },
     }),
 
     // Recent activity (last 10 updates)
@@ -63,35 +85,54 @@ export async function GET() {
         name: true,
         side: true,
         stage: true,
-        owner: true,
         updatedAt: true,
+        company: true,
       },
     }),
+
+    // Founders activated this week
+    db.activationRecord.count({
+      where: { activatedAt: { gte: weekStart }, side: "FOUNDER" },
+    }),
+
+    // Investors activated this week
+    db.activationRecord.count({
+      where: { activatedAt: { gte: weekStart }, side: "INVESTOR" },
+    }),
+
+    // Total matches created
+    db.activationMatch.count(),
+
+    // Intros sent
+    db.activationMatch.count({ where: { introSent: true } }),
   ])
 
-  // Build stage funnel
-  const stageCounts: Record<string, number> = {}
-  for (const s of byStage) {
-    stageCounts[s.stage] = s._count
+  // Build stage/side maps
+  const stages: Record<string, number> = {}
+  for (const s of byStageRaw) {
+    stages[s.stage] = s._count
   }
 
-  const sideCounts: Record<string, number> = {}
-  for (const s of bySide) {
-    sideCounts[s.side] = s._count
+  const sides: Record<string, number> = {}
+  for (const s of bySideRaw) {
+    sides[s.side] = s._count
   }
 
-  const ownerCounts: { owner: string; count: number }[] = byOwner.map((o) => ({
-    owner: o.owner ?? "Unassigned",
-    count: o._count,
-  }))
+  const owners = byOwnerRaw
+    .filter((o) => o.owner)
+    .map((o) => ({ owner: o.owner as string, count: o._count }))
 
   return NextResponse.json({
     total: totalRecords,
-    stages: stageCounts,
-    sides: sideCounts,
-    owners: ownerCounts,
-    overdue: overdueCount,
     activatedThisWeek,
+    overdue: slaOverdue,
+    stages,
+    sides,
+    owners,
     recentActivity,
+    activatedFoundersThisWeek,
+    activatedInvestorsThisWeek,
+    totalMatches,
+    introsSent,
   })
 }

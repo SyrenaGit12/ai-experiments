@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useState } from "react"
 import { useSearchParams } from "next/navigation"
+import { useToast } from "@/components/ui/toast"
 
 interface EmailTemplate {
   id: string
@@ -133,6 +134,7 @@ export default function ComposePageWrapper() {
 function ComposePage() {
   const searchParams = useSearchParams()
   const recordId = searchParams.get("record")
+  const toast = useToast()
 
   const [templates, setTemplates] = useState<EmailTemplate[]>([])
   const [selectedTemplate, setSelectedTemplate] = useState<EmailTemplate | null>(null)
@@ -144,6 +146,10 @@ function ComposePage() {
   const [subject, setSubject] = useState("")
   const [body, setBody] = useState("")
   const [ccMatchmaking, setCcMatchmaking] = useState(true)
+
+  // Loading states
+  const [seeding, setSeeding] = useState(false)
+  const [savingTemplate, setSavingTemplate] = useState(false)
 
   // Template editor
   const [editMode, setEditMode] = useState(false)
@@ -164,29 +170,46 @@ function ComposePage() {
 
   async function fetchTemplates() {
     setLoadingTemplates(true)
-    const res = await fetch("/api/templates")
-    const data = await res.json()
-    setTemplates(data)
-    setLoadingTemplates(false)
+    try {
+      const res = await fetch("/api/templates")
+      const data = await res.json()
+      setTemplates(data)
+    } catch {
+      toast.error("Failed to load templates")
+    } finally {
+      setLoadingTemplates(false)
+    }
   }
 
   async function seedDefaults() {
-    for (const t of DEFAULT_TEMPLATES) {
-      await fetch("/api/templates", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(t),
-      })
+    setSeeding(true)
+    try {
+      for (const t of DEFAULT_TEMPLATES) {
+        await fetch("/api/templates", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(t),
+        })
+      }
+      await fetchTemplates()
+      toast.success("Default templates seeded")
+    } catch {
+      toast.error("Failed to seed default templates")
+    } finally {
+      setSeeding(false)
     }
-    await fetchTemplates()
   }
 
   async function fetchRecord(id: string) {
-    const res = await fetch(`/api/activation/${id}`)
-    if (res.ok) {
-      const data = await res.json()
-      setRecord(data)
-      setToEmail(data.email)
+    try {
+      const res = await fetch(`/api/activation/${id}`)
+      if (res.ok) {
+        const data = await res.json()
+        setRecord(data)
+        setToEmail(data.email)
+      }
+    } catch {
+      toast.error("Failed to load record")
     }
   }
 
@@ -238,20 +261,28 @@ function ComposePage() {
   }
 
   async function saveTemplate() {
-    await fetch("/api/templates", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        slug: editSlug,
-        name: editName,
-        subject: editSubject,
-        body: editBody,
-        side: editSide || null,
-        description: editDescription || null,
-      }),
-    })
-    await fetchTemplates()
-    setEditMode(false)
+    setSavingTemplate(true)
+    try {
+      await fetch("/api/templates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          slug: editSlug,
+          name: editName,
+          subject: editSubject,
+          body: editBody,
+          side: editSide || null,
+          description: editDescription || null,
+        }),
+      })
+      await fetchTemplates()
+      setEditMode(false)
+      toast.success("Template saved")
+    } catch {
+      toast.error("Failed to save template")
+    } finally {
+      setSavingTemplate(false)
+    }
   }
 
   function startEditTemplate(tmpl?: EmailTemplate) {
@@ -307,9 +338,11 @@ function ComposePage() {
                 <p className="text-gray-500 text-sm mb-2">No templates yet</p>
                 <button
                   onClick={seedDefaults}
-                  className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-500"
+                  disabled={seeding}
+                  className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-500 disabled:opacity-50 transition-colors flex items-center gap-2"
                 >
-                  Seed Default Templates
+                  {seeding && <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+                  {seeding ? "Seeding..." : "Seed Default Templates"}
                 </button>
               </div>
             ) : (
@@ -423,9 +456,11 @@ function ComposePage() {
                 <div className="flex gap-2">
                   <button
                     onClick={saveTemplate}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-500"
+                    disabled={savingTemplate}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-500 disabled:opacity-50 transition-colors flex items-center gap-2"
                   >
-                    Save Template
+                    {savingTemplate && <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+                    {savingTemplate ? "Saving..." : "Save Template"}
                   </button>
                   <button
                     onClick={() => setEditMode(false)}
@@ -491,7 +526,7 @@ function ComposePage() {
                   <button
                     onClick={() => {
                       navigator.clipboard.writeText(body)
-                      alert("Email body copied to clipboard!")
+                      toast.success("Email body copied to clipboard!")
                     }}
                     className="px-4 py-2 bg-gray-700 text-gray-300 rounded-lg text-sm hover:bg-gray-600"
                   >

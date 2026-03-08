@@ -1,7 +1,9 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useCallback } from "react"
 import Link from "next/link"
+import { ConfirmDialog } from "@/components/ui/confirm-dialog"
+import { useToast } from "@/components/ui/toast"
 
 interface NewJoinerMatch {
   id: string
@@ -48,9 +50,12 @@ export default function NewJoinersPage() {
   const [sendingId, setSendingId] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editText, setEditText] = useState("")
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [mutatingId, setMutatingId] = useState<string | null>(null) // loading state for approve/save/delete
+  const toast = useToast()
 
-  async function fetchData() {
-    setLoading(true)
+  const fetchData = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true)
     try {
       const res = await fetch("/api/new-joiners")
       const json = await res.json()
@@ -58,13 +63,21 @@ export default function NewJoinersPage() {
       setTotalMatches(json.totalMatches ?? 0)
     } catch {
       console.error("Failed to fetch new joiners")
+      if (!silent) toast.error("Failed to load new joiners")
+    } finally {
+      if (!silent) setLoading(false)
     }
-    setLoading(false)
-  }
+  }, [])
 
   useEffect(() => {
     fetchData()
-  }, [])
+  }, [fetchData])
+
+  // Auto-refresh every 30 seconds (silent — no loading flash)
+  useEffect(() => {
+    const interval = setInterval(() => fetchData(true), 30_000)
+    return () => clearInterval(interval)
+  }, [fetchData])
 
   async function runMatching() {
     setRunning(true)
@@ -80,7 +93,7 @@ export default function NewJoinersPage() {
           `Found ${s?.newJoinersFound ?? 0} new joiners, created ${s?.matchesCreated ?? 0} matches`
         )
       }
-      await fetchData()
+      await fetchData(true)
     } catch {
       setRunResult("Failed to run matching")
     }
@@ -88,29 +101,52 @@ export default function NewJoinersPage() {
   }
 
   async function toggleApprove(matchId: string, currentApproved: boolean) {
-    await fetch(`/api/new-joiners/${matchId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ approved: !currentApproved }),
-    })
-    await fetchData()
+    setMutatingId(matchId)
+    try {
+      await fetch(`/api/new-joiners/${matchId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ approved: !currentApproved }),
+      })
+      await fetchData(true)
+    } catch {
+      toast.error("Failed to update approval")
+    } finally {
+      setMutatingId(null)
+    }
   }
 
   async function saveWhyRelevant(matchId: string) {
-    await fetch(`/api/new-joiners/${matchId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ whyRelevant: editText }),
-    })
-    setEditingId(null)
-    setEditText("")
-    await fetchData()
+    setMutatingId(matchId)
+    try {
+      await fetch(`/api/new-joiners/${matchId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ whyRelevant: editText }),
+      })
+      setEditingId(null)
+      setEditText("")
+      await fetchData(true)
+      toast.success("Personalization line saved")
+    } catch {
+      toast.error("Failed to save personalization line")
+    } finally {
+      setMutatingId(null)
+    }
   }
 
   async function removeMatch(matchId: string) {
-    if (!confirm("Remove this match?")) return
-    await fetch(`/api/new-joiners/${matchId}`, { method: "DELETE" })
-    await fetchData()
+    setMutatingId(matchId)
+    try {
+      await fetch(`/api/new-joiners/${matchId}`, { method: "DELETE" })
+      setConfirmDeleteId(null)
+      await fetchData(true)
+      toast.success("Match removed")
+    } catch {
+      toast.error("Failed to remove match")
+    } finally {
+      setMutatingId(null)
+    }
   }
 
   async function sendEmail(matchId: string) {
@@ -121,11 +157,13 @@ export default function NewJoinersPage() {
       })
       const json = await res.json()
       if (!res.ok) {
-        alert(json.error ?? "Failed to send")
+        toast.error(json.error ?? "Failed to send email")
+      } else {
+        toast.success("Email sent")
       }
-      await fetchData()
+      await fetchData(true)
     } catch {
-      alert("Failed to send email")
+      toast.error("Failed to send email")
     }
     setSendingId(null)
   }
@@ -135,14 +173,6 @@ export default function NewJoinersPage() {
   const approvedCount = allMatches.filter((m) => m.approved).length
   const sentCount = allMatches.filter((m) => m.emailSentAt).length
   const draftCount = allMatches.filter((m) => m.stage === 0).length
-
-  if (loading) {
-    return (
-      <div className="p-6">
-        <p className="text-gray-400">Loading new joiners...</p>
-      </div>
-    )
-  }
 
   return (
     <div className="p-6 max-w-5xl">
@@ -163,14 +193,28 @@ export default function NewJoinersPage() {
             Users who signed up within the last 7 days get 2-3 curated matches.
           </p>
         </div>
-        <button
-          onClick={runMatching}
-          disabled={running}
-          className="px-4 py-2 bg-purple-700 text-white rounded-lg text-sm font-medium hover:bg-purple-600 disabled:opacity-50 transition-colors"
-        >
-          {running ? "Matching..." : "Run Matching"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => fetchData()}
+            disabled={loading}
+            className="px-3 py-2 bg-gray-800 border border-gray-700 text-gray-300 text-sm rounded-lg hover:bg-gray-700 disabled:opacity-50 transition-colors"
+          >
+            {loading ? "..." : "↻ Refresh"}
+          </button>
+          <button
+            onClick={runMatching}
+            disabled={running}
+            className="px-4 py-2 bg-purple-700 text-white rounded-lg text-sm font-medium hover:bg-purple-600 disabled:opacity-50 transition-colors"
+          >
+            {running ? "Matching..." : "Run Matching"}
+          </button>
+        </div>
       </div>
+
+      {/* Loading state (first load only) */}
+      {loading && users.length === 0 && (
+        <div className="text-center py-20 text-gray-500">Loading new joiners...</div>
+      )}
 
       {/* Run result banner */}
       {runResult && (
@@ -277,10 +321,10 @@ export default function NewJoinersPage() {
                           await sendEmail(m.id)
                         }
                       }}
-                      disabled={sendingId !== null}
-                      className="px-3 py-1.5 bg-green-700 text-white rounded text-xs font-medium hover:bg-green-600 disabled:opacity-50 transition-colors"
+                      disabled={sendingId !== null || mutatingId !== null}
+                      className="px-3 py-1.5 bg-green-700 text-white rounded text-xs font-medium hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     >
-                      Send Welcome Emails
+                      {sendingId !== null ? "Sending..." : "Send Welcome Emails"}
                     </button>
                   )}
                   <span className="text-xs text-gray-500">
@@ -337,16 +381,18 @@ export default function NewJoinersPage() {
                             />
                             <button
                               onClick={() => saveWhyRelevant(match.id)}
-                              className="px-2 py-1 bg-blue-700 text-white rounded text-xs hover:bg-blue-600"
+                              disabled={mutatingId === match.id}
+                              className="px-2 py-1 bg-blue-700 text-white rounded text-xs hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
-                              Save
+                              {mutatingId === match.id ? "Saving..." : "Save"}
                             </button>
                             <button
                               onClick={() => {
                                 setEditingId(null)
                                 setEditText("")
                               }}
-                              className="px-2 py-1 bg-gray-700 text-white rounded text-xs hover:bg-gray-600"
+                              disabled={mutatingId === match.id}
+                              className="px-2 py-1 bg-gray-700 text-white rounded text-xs hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                               Cancel
                             </button>
@@ -381,14 +427,15 @@ export default function NewJoinersPage() {
                         {/* Approve toggle */}
                         <button
                           onClick={() => toggleApprove(match.id, match.approved)}
-                          className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                          disabled={mutatingId === match.id || sendingId === match.id}
+                          className={`px-2 py-1 rounded text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                             match.approved
                               ? "bg-green-800 text-green-200 hover:bg-green-700"
                               : "bg-gray-700 text-gray-400 hover:bg-gray-600"
                           }`}
                           title={match.approved ? "Approved — click to unapprove" : "Click to approve"}
                         >
-                          {match.approved ? "✓" : "○"}
+                          {mutatingId === match.id ? "…" : match.approved ? "✓" : "○"}
                         </button>
 
                         {/* Edit line */}
@@ -397,7 +444,8 @@ export default function NewJoinersPage() {
                             setEditingId(match.id)
                             setEditText(match.whyRelevant ?? "")
                           }}
-                          className="px-2 py-1 bg-gray-700 text-gray-400 rounded text-xs hover:bg-gray-600 hover:text-white transition-colors"
+                          disabled={mutatingId === match.id || sendingId === match.id}
+                          className="px-2 py-1 bg-gray-700 text-gray-400 rounded text-xs hover:bg-gray-600 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                           title="Edit personalization line"
                         >
                           ✎
@@ -407,8 +455,8 @@ export default function NewJoinersPage() {
                         {match.approved && !match.emailSentAt && (
                           <button
                             onClick={() => sendEmail(match.id)}
-                            disabled={sendingId === match.id}
-                            className="px-2 py-1 bg-blue-700 text-white rounded text-xs hover:bg-blue-600 disabled:opacity-50 transition-colors"
+                            disabled={sendingId === match.id || mutatingId === match.id}
+                            className="px-2 py-1 bg-blue-700 text-white rounded text-xs hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                             title="Send welcome email"
                           >
                             {sendingId === match.id ? "..." : "Send"}
@@ -418,8 +466,9 @@ export default function NewJoinersPage() {
                         {/* Remove */}
                         {!match.emailSentAt && (
                           <button
-                            onClick={() => removeMatch(match.id)}
-                            className="px-2 py-1 bg-gray-800 text-gray-500 rounded text-xs hover:bg-red-900/50 hover:text-red-400 transition-colors"
+                            onClick={() => setConfirmDeleteId(match.id)}
+                            disabled={mutatingId === match.id || sendingId === match.id}
+                            className="px-2 py-1 bg-gray-800 text-gray-500 rounded text-xs hover:bg-red-900/50 hover:text-red-400 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                             title="Remove match"
                           >
                             ✗
@@ -434,6 +483,19 @@ export default function NewJoinersPage() {
           )
         })}
       </div>
+
+      <ConfirmDialog
+        open={!!confirmDeleteId}
+        onConfirm={() => {
+          if (confirmDeleteId) removeMatch(confirmDeleteId)
+        }}
+        onCancel={() => setConfirmDeleteId(null)}
+        title="Remove this match?"
+        description="The match will be permanently removed. This action cannot be undone."
+        confirmLabel="Remove"
+        variant="danger"
+        loading={!!mutatingId}
+      />
     </div>
   )
 }

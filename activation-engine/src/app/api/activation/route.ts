@@ -3,6 +3,7 @@ import { z } from "zod"
 import db from "@/lib/db"
 import type { ActivationSide, ActivationStage } from "@prisma/client"
 import { SYRENA_INDUSTRIES, SYRENA_FUNDING_STAGES, TEAM_MEMBERS } from "@/lib/constants"
+import { logActivity } from "@/lib/activity-log"
 
 // ─── Validation Schemas ─────────────────────────────────
 const createActivationSchema = z.object({
@@ -46,7 +47,20 @@ export async function GET(request: Request) {
     ]
   }
 
-  const [records, total] = await Promise.all([
+  // Build base where (without stage filter) for stage counts
+  const baseWhere: Record<string, unknown> = {}
+  if (side) baseWhere.side = side
+  if (owner) baseWhere.owner = owner
+  if (industry) baseWhere.industry = industry
+  if (search) {
+    baseWhere.OR = [
+      { name: { contains: search, mode: "insensitive" } },
+      { email: { contains: search, mode: "insensitive" } },
+      { company: { contains: search, mode: "insensitive" } },
+    ]
+  }
+
+  const [records, total, stageGroups] = await Promise.all([
     db.activationRecord.findMany({
       where,
       include: { matches: true },
@@ -55,9 +69,20 @@ export async function GET(request: Request) {
       skip: offset,
     }),
     db.activationRecord.count({ where }),
+    db.activationRecord.groupBy({
+      by: ["stage"],
+      where: baseWhere,
+      _count: true,
+    }),
   ])
 
-  return NextResponse.json({ records, total, limit, offset })
+  // Convert groupBy result to { stage: count } map
+  const stageCounts: Record<string, number> = {}
+  for (const g of stageGroups) {
+    stageCounts[g.stage] = g._count
+  }
+
+  return NextResponse.json({ records, total, limit, offset, stageCounts })
 }
 
 /**
@@ -114,6 +139,19 @@ export async function POST(request: Request) {
       owner: data.owner ?? null,
       notes: data.notes ?? null,
       slaDeadline: data.slaDeadline ? new Date(data.slaDeadline) : null,
+    },
+  })
+
+  // Non-blocking audit log
+  logActivity({
+    activationRecordId: record.id,
+    action: "RECORD_CREATED",
+    detail: `${data.name} (${data.side}) added to pipeline`,
+    meta: {
+      side: data.side,
+      industry: data.industry,
+      owner: data.owner ?? null,
+      fundingStage: data.fundingStage ?? null,
     },
   })
 
