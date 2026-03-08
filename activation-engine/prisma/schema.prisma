@@ -396,3 +396,149 @@ model NewJoinerMatch {
   @@index([userId])
   @@index([matchUserId])
 }
+
+// ─── Activation Workspace (Pipeline Tracker) ────────────
+
+enum ActivationSide {
+  INVESTOR
+  FOUNDER
+}
+
+enum ActivationStage {
+  NEW                    // Just added to pipeline
+  S1_MATCHES_SENT        // Stage 1: Match list emailed to user
+  S2_USER_RESPONDED      // Stage 2: User replied with selection
+  S3_COUNTERPARTY_ASKED  // Stage 3: Counterparty contacted
+  S3_FEEDBACK_RECEIVED   // Stage 3: Counterparty responded
+  ACTIVATED              // All stages complete — intro made or feedback delivered
+  STALLED                // SLA expired or no response
+  DECLINED               // User opted out
+}
+
+model ActivationRecord {
+  id              String          @id @default(cuid())
+  syrenaUserId    String          // References Syrena User.id
+  side            ActivationSide
+
+  // Denormalized from Syrena for fast display (no extra SQL per row)
+  name            String
+  email           String
+  company         String?         // Founder company name / Investor firm
+  industry        String          // Primary industry
+  fundingStage    String?         // Founder: current stage / Investor: stages they invest
+
+  // Pipeline tracking
+  stage           ActivationStage @default(NEW)
+  owner           String?         // Team member who owns this record
+
+  // Stage 1: Matches sent
+  matchesSentAt   DateTime?
+  matchesSentBy   String?         // Who sent the email
+
+  // Stage 2: User responded
+  respondedAt     DateTime?
+  selectedMatchId String?         // Which match they picked
+
+  // Stage 3: Counterparty
+  counterpartyAskedAt     DateTime?
+  counterpartyRespondedAt DateTime?
+  outcome                 String?  // "intro_made" | "declined" | "no_response"
+
+  // Activation
+  activatedAt     DateTime?
+
+  // Notes
+  notes           String?
+
+  // SLA tracking
+  slaDeadline     DateTime?
+
+  // Link to pool system (optional)
+  poolId          String?
+
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  matches         ActivationMatch[]
+  activityLogs    ActivityLog[]
+
+  @@unique([syrenaUserId])
+  @@index([stage])
+  @@index([side])
+  @@index([owner])
+  @@index([industry])
+}
+
+model ActivationMatch {
+  id                  String           @id @default(cuid())
+  activationRecordId  String
+  activationRecord    ActivationRecord @relation(fields: [activationRecordId], references: [id], onDelete: Cascade)
+
+  matchSyrenaUserId   String
+  matchSide           ActivationSide
+
+  // Denormalized
+  matchName           String
+  matchEmail          String
+  matchCompany        String?
+  matchIndustry       String?
+
+  // Personalization
+  whyRelevant         String?
+
+  // Selection & outcome
+  selected            Boolean          @default(false)
+  counterpartyResponse String?         // "interested" | "declined" | "no_response"
+  introSent           Boolean          @default(false)
+  introSentAt         DateTime?
+
+  // Email tracking
+  emailSentToMatch    Boolean          @default(false)
+  emailSentToMatchAt  DateTime?
+
+  // Feedback
+  feedback            String?
+  feedbackDelivered   Boolean          @default(false)
+  feedbackDeliveredAt DateTime?
+
+  score               Float            @default(0)
+
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+
+  @@index([activationRecordId])
+  @@index([matchSyrenaUserId])
+}
+
+// ─── Activity Logs (Audit Trail) ───────────────────────
+
+model ActivityLog {
+  id                  String           @id @default(cuid())
+  activationRecordId  String
+  activationRecord    ActivationRecord @relation(fields: [activationRecordId], references: [id], onDelete: Cascade)
+
+  action              String   // "stage_changed", "owner_changed", "notes_updated", "match_selected", "intro_sent", "feedback_delivered", "record_created", etc.
+  actor               String?  // Team member name who performed the action
+  detail              String?  // Human-readable description e.g. "Stage changed from New to Matches Sent"
+  meta                Json?    // Structured data e.g. { from: "NEW", to: "S1_MATCHES_SENT" }
+
+  createdAt           DateTime @default(now())
+
+  @@index([activationRecordId])
+  @@index([createdAt])
+}
+
+// ─── Email Templates ────────────────────────────────────
+
+model EmailTemplate {
+  id          String          @id @default(cuid())
+  slug        String          @unique
+  name        String
+  subject     String
+  body        String
+  side        ActivationSide?
+  description String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}

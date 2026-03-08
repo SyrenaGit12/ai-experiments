@@ -102,3 +102,79 @@ export const SYRENA_USER_STATUSES = [
   "APPROVED",
   "PROFILE_COMPLETED",
 ] as const
+
+// ─── Activation UI Constants ────────────────────────────
+// Single source of truth — imported by Dashboard, Pipeline, Detail pages
+
+export const STAGES = [
+  "NEW",
+  "S1_MATCHES_SENT",
+  "S2_USER_RESPONDED",
+  "S3_COUNTERPARTY_ASKED",
+  "S3_FEEDBACK_RECEIVED",
+  "ACTIVATED",
+  "STALLED",
+  "DECLINED",
+] as const
+
+/** Active pipeline stages (excludes terminal states) — used for progress bars */
+export const STAGE_ORDER = [
+  "NEW",
+  "S1_MATCHES_SENT",
+  "S2_USER_RESPONDED",
+  "S3_COUNTERPARTY_ASKED",
+  "S3_FEEDBACK_RECEIVED",
+  "ACTIVATED",
+] as const
+
+/** Short labels for badges & compact UI */
+export const STAGE_LABELS: Record<string, string> = {
+  NEW: "New",
+  S1_MATCHES_SENT: "S1: Matches Sent",
+  S2_USER_RESPONDED: "S2: Responded",
+  S3_COUNTERPARTY_ASKED: "S3: CP Asked",
+  S3_FEEDBACK_RECEIVED: "S3: Feedback In",
+  ACTIVATED: "Activated ✓",
+  STALLED: "Stalled",
+  DECLINED: "Declined",
+}
+
+/** Longer labels for detail page contexts */
+export const STAGE_LABELS_FULL: Record<string, string> = {
+  NEW: "New",
+  S1_MATCHES_SENT: "S1: Matches Sent",
+  S2_USER_RESPONDED: "S2: User Responded",
+  S3_COUNTERPARTY_ASKED: "S3: Counterparty Asked",
+  S3_FEEDBACK_RECEIVED: "S3: Feedback Received",
+  ACTIVATED: "Activated ✓",
+  STALLED: "Stalled",
+  DECLINED: "Declined",
+}
+
+/** Compound bg+text classes for stage badges */
+export const STAGE_BADGE_COLORS: Record<string, string> = {
+  NEW: "bg-gray-700 text-gray-300",
+  S1_MATCHES_SENT: "bg-blue-900/50 text-blue-300",
+  S2_USER_RESPONDED: "bg-purple-900/50 text-purple-300",
+  S3_COUNTERPARTY_ASKED: "bg-amber-900/50 text-amber-300",
+  S3_FEEDBACK_RECEIVED: "bg-cyan-900/50 text-cyan-300",
+  ACTIVATED: "bg-green-900/50 text-green-300",
+  STALLED: "bg-red-900/50 text-red-300",
+  DECLINED: "bg-gray-800 text-gray-500",
+}
+
+/** Simple bg classes for funnel bars (dashboard) */
+export const STAGE_BAR_COLORS: Record<string, string> = {
+  NEW: "bg-gray-700",
+  S1_MATCHES_SENT: "bg-blue-600",
+  S2_USER_RESPONDED: "bg-purple-600",
+  S3_COUNTERPARTY_ASKED: "bg-amber-600",
+  S3_FEEDBACK_RECEIVED: "bg-cyan-600",
+  ACTIVATED: "bg-green-600",
+  STALLED: "bg-red-600",
+  DECLINED: "bg-gray-600",
+}
+
+export const TEAM_MEMBERS = ["Saksham", "Greg", "Silvio", "Rich", "Josh", "Aziz"] as const
+
+export const WEEKLY_TARGETS = { founders: 40, investors: 20 } as const
